@@ -3,10 +3,11 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from database.database import SessionLocal, engine
 from database.models import User
+from routers import login
 
 app = FastAPI()
 
-# app.include_router(login.routers, prefix= "/auth", tags= ["authentication"])
+app.include_router(login.router, prefix= "/auth", tags= ["authentication"])
 
 
 def get_data():
