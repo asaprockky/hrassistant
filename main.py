@@ -1,12 +1,22 @@
 from fastapi import Depends, FastAPI, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from .routers import login
+from sqlalchemy.orm import Session
+from database.database import SessionLocal, engine
+from database.models import User
 
 app = FastAPI()
 
-app.include_router(login.routers, prefix= "/auth", tags= ["authentication"])
+# app.include_router(login.routers, prefix= "/auth", tags= ["authentication"])
 
+
+def get_data():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 @app.get("/test/")
-async def test():
-    return {"Hello World"}
+async def test(db: Session = Depends(get_data)):
+    users = db.query(User).all()
+    return users
