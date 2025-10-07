@@ -10,7 +10,7 @@ router = APIRouter()
 
 @router.post("/vacancies/create", response_model= VacancyResponse)
 async def crete_vacancy(data: VacancyResponse, db: Session = Depends(get_data), current_user: User = Depends(get_current_user)):
-    company = db.query(Company).filter(Company.user_id == current_user.id).first()
+    company = db.query(Company).filter(Company.id == current_user.company_id).first()
     if not company:
         raise HTTPException(status_code=400, detail="Company not found for this user")
     new_vacancy = Created_Vacancy(

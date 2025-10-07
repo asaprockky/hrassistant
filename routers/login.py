@@ -5,8 +5,7 @@ from sqlalchemy.orm import Session
 from jose import jwt, JWTError
 from database.models import User
 from auth.jwt_handler import create_access_token, verify_access_token
-from fastapi.security import OAuth2PasswordBearer
-
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/users/login")
 
 
@@ -22,7 +21,7 @@ def get_data():
         db.close()
 
 
-SECRET_KEY = "123012o30120mewkfmwfewi"
+SECRET_KEY = "supersecretkey123"
 def get_current_user(db: Session = Depends(get_data), token: str = Depends(oauth2_scheme)):
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=["HS256"])
@@ -40,16 +39,12 @@ def get_current_user(db: Session = Depends(get_data), token: str = Depends(oauth
 
 
 @router.post("/login")
-async def login(user_data: UserCreate, db: Session = Depends(get_data)):
-    user = db.query(User).filter(User.username == user_data.username).first()
+async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_data)):
+    user = db.query(User).filter(User.username == form_data.username).first()
     
-    if not user or user.password != user_data.password:
+    if not user or user.password != form_data.password:
         raise HTTPException(status_code=400, detail="Invalid username or password")
 
     access_token = create_access_token(data={"user_id": user.id, "username": user.username})
     
-    return {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "user_role": user.role
-    }
+    return {"access_token": access_token, "token_type": "bearer"}
