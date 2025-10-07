@@ -8,7 +8,8 @@ from routers import login, main_page
 app = FastAPI()
 
 app.include_router(login.router, prefix= "", tags= ["authentication"])
-app.include_router(main_page.router, prefix= "/create_job", tags= ["create_job"])
+app.include_router(main_page.router, prefix= "", tags= ["create_job"])
+app.include_router(main_page.router, prefix= "", tags= ["vacancies"])
 
 
 def get_data():

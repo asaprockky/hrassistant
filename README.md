@@ -63,3 +63,35 @@ Authorization: Bearer <your_token>
  date: Tue,07 Oct 2025 06:40:53 GMT 
  server: uvicorn 
 ```
+
+```
+
+### 👤 GET `/create_job/vacancies` 
+**Authentication:** Required (Bearer Token)  
+**Headers:**
+```
+Authorization: Bearer <your_token>
+```
+**Response:**
+```json
+[
+  {
+    "id": 1,
+    "job_name": "Backend Developer",
+    "job_description": "Responsible for building REST APIs using FastAPI and PostgreSQL.",
+    "tag": "Python",
+    "start_date": "2025-10-07",
+    "end_date": "2025-11-07",
+    "company_id": 1
+  },
+  {
+    "id": 2,
+    "job_name": "Frontend Developer",
+    "job_description": "Develop responsive web interfaces using React and Tailwind CSS.",
+    "tag": "React",
+    "start_date": "2025-10-10",
+    "end_date": "2025-11-10",
+    "company_id": 1
+  }
+]
+```

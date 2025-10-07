@@ -26,3 +26,12 @@ async def crete_vacancy(data: VacancyResponse, db: Session = Depends(get_data), 
     db.commit()
     db.refresh(new_vacancy)
     return new_vacancy
+
+
+@router.get("/vacancies", response_model=list[VacancyResponse])
+def get_vacancies(db: Session = Depends(get_data), current_user: User = Depends(get_current_user)):
+    company = db.query(Company).filter(Company.id == current_user.company_id).first()
+    if not company:
+        raise HTTPException(status_code=400, detail="Company not found for this user")
+    vacancies = db.query(Created_Vacancy).filter(Created_Vacancy.company_id == company.id).all()
+    return vacancies
