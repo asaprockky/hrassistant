@@ -26,3 +26,6 @@ class VacancyResponse(BaseModel):
 
     class Config:
         orm_mode = True  # allows SQLAlchemy models to be converted to JSON
+
+
+

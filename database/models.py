@@ -1,6 +1,7 @@
 from database.database import Base
-from sqlalchemy import Column, Date, Integer, String, ForeignKey, Boolean, Text
+from sqlalchemy import Column, Date, Integer, String, ForeignKey, Boolean, Text, Float
 from sqlalchemy.orm import relationship
+from datetime import datetime
 
 
 class Company(Base):
@@ -12,9 +13,10 @@ class Company(Base):
     INN = Column(String(20))
     email = Column(String(100), unique=True)
 
-    # Correct relationships
+    # Relationships
     users = relationship("User", back_populates="company")
     created_vacancies = relationship("Created_Vacancy", back_populates="company")
+
 
 class User(Base):
     __tablename__ = "users"
@@ -38,5 +40,25 @@ class Created_Vacancy(Base):
     end_date = Column(Date, nullable=False)
     candidate_count = Column(Integer, default=0)
     is_available = Column(Boolean, default=True)
+
     company_id = Column(Integer, ForeignKey("companies.id"))
     company = relationship("Company", back_populates="created_vacancies")
+
+    # Relationship with candidates
+    candidates = relationship("Candidate", back_populates="vacancy")
+
+
+class Candidate(Base):
+    __tablename__ = "candidates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    full_name = Column(String(100), nullable=False)
+    resume_loc = Column(String(255), nullable=False)  # File path or URL
+    ai_score = Column(Float, default=0.0)
+    created_at = Column(Date, default=datetime.utcnow)
+    education = Column(String(255))
+    experience = Column(String(255))
+    skills = Column(String(255))
+
+    vacancy_id = Column(Integer, ForeignKey("created_vacancies.id"))
+    vacancy = relationship("Created_Vacancy", back_populates="candidates")
