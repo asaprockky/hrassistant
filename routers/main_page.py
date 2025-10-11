@@ -1,8 +1,8 @@
 import os
 import shutil
 import uuid
-from fastapi import APIRouter, HTTPException, UploadFile
-from hrassistant.database.database import SessionLocal
+from fastapi import APIRouter, HTTPException, UploadFile, File
+from database.database import SessionLocal
 from routers.login import get_data, get_current_user
 from schemas.user_schema import VacancyResponse
 from database.models import Created_Vacancy, User, Company
@@ -46,21 +46,31 @@ async def get_vacancies(db: Session = Depends(get_data), current_user: User = De
 
 @router.post("/vacancies/upload_resumes")
 async def upload_resumes(file: UploadFile = File(...)):
+    UPLOAD_DIR = ''
     db: Session = SessionLocal()
-    file_count = 1
-    UPLOAD_DIR = ""
+    try:
+        unique_filename = f"{uuid.uuid4()}_{file.filename}"
+        file_path = os.path.join(UPLOAD_DIR, unique_filename)
 
 
-    unique_filename = f"{uuid.uuid4()}_{file.filename}"
-    file_path = os.path.join(UPLOAD_DIR, unique_filename)
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
 
 
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
+        if not file.filename.lower().endswith(".pdf"):
+            raise HTTPException(status_code=400, detail="Invalid file type. Only PDFs are allowed.")
 
-    for i in range(file_count):
-        if i.endswith("pdf"):
-            reader = PdfReader(file_path)
-            text_content = " ".join([page.extract_text() or "" for page in reader.pages])
-        else:
-            return("Invalid Content")
+        reader = PdfReader(file_path)
+        text_content = " ".join([page.extract_text() or "" for page in reader.pages])
+
+        return {
+            "message": "Resume uploaded and processed successfully",
+            "filename": unique_filename,
+            "content_preview": text_content[:500]  
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error uploading file: {str(e)}")
+
+    finally:
+        db.close()
