@@ -1,3 +1,5 @@
+import token
+from urllib import response
 from fastapi import  APIRouter, Depends, HTTPException
 from schemas.user_schema import UserCreate, UserResponse
 from database.database import SessionLocal, engine
@@ -47,4 +49,11 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = 
 
     access_token = create_access_token(data={"user_id": user.id, "username": user.username})
     
-    return {"access_token": access_token, "token_type": "bearer"}
+    response.set_cookie(        
+        key=access_token,
+        value=token,
+        httponly=True,           # Prevents JavaScript access
+        secure=False,            # Use True if HTTPS
+        samesite="lax",          # or 'strict' for more security
+        max_age=3600,            # seconds
+        expires=3600)
