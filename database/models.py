@@ -1,5 +1,5 @@
 from database.database import Base
-from sqlalchemy import Column, Date, Integer, String, ForeignKey, Boolean, Text, Float
+from sqlalchemy import JSON, Column, Date, Integer, String, ForeignKey, Boolean, Text, Float
 from sqlalchemy.orm import relationship
 from datetime import datetime
 
@@ -62,3 +62,15 @@ class Candidate(Base):
 
     vacancy_id = Column(Integer, ForeignKey("created_vacancies.id"))
     vacancy = relationship("Created_Vacancy", back_populates="candidates")
+
+class Question(Base):
+    __tablename__ = "user_questions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    text = Column(String, nullable=False)                  # question text
+    difficulty_level = Column(Integer, nullable=False)    # 1-9
+    correct_answer = Column(String, nullable=False)
+    options = Column(JSON)                                # ["option1", "option2", ...]
+    category = Column(String(50))                          # e.g. math, python
+    points = Column(Float)
+

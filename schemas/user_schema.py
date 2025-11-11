@@ -29,3 +29,6 @@ class VacancyResponse(BaseModel):
 
 
 
+
+class Answer(BaseModel):
+    correct: bool
