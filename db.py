@@ -6,7 +6,7 @@ from database import models
 import json
 
 
-
+# Create tables in the database
 def seed_questions():
     db: Session = SessionLocal()
 

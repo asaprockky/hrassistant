@@ -3,10 +3,10 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
 # ✅ Replace with your actual MySQL credentials
-#DATABASE_URL = "sqlite:///./test.db"
+DATABASE_URL = "sqlite:///./test.db"
 
 ## internal url
-DATABASE_URL = "postgresql://asap:SC4DMhaYXca3I5KOrKYGZnHVQuFcXe05@dpg-d49n53f5r7bs73dv8sug-a/hrassistant"
+#DATABASE_URL = "postgresql://asap:SC4DMhaYXca3I5KOrKYGZnHVQuFcXe05@dpg-d49n53f5r7bs73dv8sug-a/hrassistant"
 ## external url
 #DATABASE_URL = "postgresql://asap:SC4DMhaYXca3I5KOrKYGZnHVQuFcXe05@dpg-d49n53f5r7bs73dv8sug-a.oregon-postgres.render.com/hrassistant"
 

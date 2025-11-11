@@ -1,9 +1,10 @@
 from database.database import Base
-from sqlalchemy import JSON, Column, Date, Integer, String, ForeignKey, Boolean, Text, Float
+from sqlalchemy import JSON, Column, Date, Integer, String, ForeignKey, Boolean, Text, Float, DateTime
 from sqlalchemy.orm import relationship
 from datetime import datetime
+from sqlalchemy.sql import func
 
-
+# --- Company Model ---
 class Company(Base):
     __tablename__ = "companies"
 
@@ -17,7 +18,7 @@ class Company(Base):
     users = relationship("User", back_populates="company")
     created_vacancies = relationship("Created_Vacancy", back_populates="company")
 
-
+# --- User Model ---
 class User(Base):
     __tablename__ = "users"
 
@@ -25,10 +26,11 @@ class User(Base):
     username = Column(String(30), unique=True, nullable=False)
     role = Column(String(30))
     password = Column(String(100), nullable=False)
+    
     company_id = Column(Integer, ForeignKey("companies.id"))
     company = relationship("Company", back_populates="users")
 
-
+# --- Created_Vacancy Model ---
 class Created_Vacancy(Base):
     __tablename__ = 'created_vacancies'
 
@@ -47,15 +49,15 @@ class Created_Vacancy(Base):
     # Relationship with candidates
     candidates = relationship("Candidate", back_populates="vacancy")
 
-
+# --- Candidate Model ---
 class Candidate(Base):
     __tablename__ = "candidates"
 
     id = Column(Integer, primary_key=True, index=True)
     full_name = Column(String(100), nullable=False)
-    resume_loc = Column(String(255), nullable=False)  # File path or URL
+    resume_loc = Column(String(255), nullable=False)
     ai_score = Column(Float, default=0.0)
-    created_at = Column(Date, default=datetime.utcnow)
+    created_at = Column(DateTime, default=func.now()) # Use DateTime and func.now() for better database tracking
     education = Column(String(255))
     experience = Column(String(255))
     skills = Column(String(255))
@@ -63,14 +65,38 @@ class Candidate(Base):
     vacancy_id = Column(Integer, ForeignKey("created_vacancies.id"))
     vacancy = relationship("Created_Vacancy", back_populates="candidates")
 
+    # Relationship to answers
+    user_answers = relationship("UserAnswer", back_populates="candidate")
+
+# --- Question Model (The Single, Correct Definition) ---
 class Question(Base):
     __tablename__ = "user_questions"
 
     id = Column(Integer, primary_key=True, index=True)
-    text = Column(String, nullable=False)                  # question text
-    difficulty_level = Column(Integer, nullable=False)    # 1-9
+    text = Column(String, nullable=False)
+    difficulty_level = Column(Integer, nullable=False) # 1-9
     correct_answer = Column(String, nullable=False)
-    options = Column(JSON)                                # ["option1", "option2", ...]
-    category = Column(String(50))                          # e.g. math, python
+    options = Column(JSON) # e.g. ["option1", "option2", ...]
+    category = Column(String(50)) # e.g. math, python
     points = Column(Float)
 
+    # Relationship to answers
+    user_answers = relationship("UserAnswer", back_populates="question")
+
+# --- UserAnswer Model ---
+class UserAnswer(Base):
+    __tablename__ = "user_answers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_answer = Column(String, nullable=False)
+    is_correct = Column(Boolean, nullable=False) # Tracks correctness
+    score_awarded = Column(Float, default=0.0) # Tracks points awarded for the answer
+    
+    candidate_id = Column(Integer, ForeignKey("candidates.id"))
+    question_id = Column(Integer, ForeignKey("user_questions.id"))
+    
+    answered_at = Column(DateTime, default=func.now()) # When the answer was recorded
+
+    # Relationships
+    candidate = relationship("Candidate", back_populates="user_answers")
+    question = relationship("Question", back_populates="user_answers")
