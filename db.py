@@ -1,7 +1,11 @@
 from sqlalchemy.orm import Session
+from database.database import Base, engine
 from database.database import SessionLocal
+from database.models import * 
 from database import models
 import json
+
+
 
 def seed_questions():
     db: Session = SessionLocal()
