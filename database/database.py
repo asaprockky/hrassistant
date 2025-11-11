@@ -3,7 +3,8 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
 # ✅ Replace with your actual MySQL credentials
-DATABASE_URL = "sqlite:///./test.db"
+#DATABASE_URL = "sqlite:///./test.db"
+DATABASE_URL = "sqlite:////opt/render/data/test.db"
 
 # Create SQLAlchemy engine
 engine = create_engine(
