@@ -23,7 +23,7 @@ def get_data():
 @app.get("/users")
 async def test(db: Session = Depends(get_data)):
     users = db.query(User).all()
-    return users
+    return {"message": "hello"}
 
 
 @app.get("/ping")

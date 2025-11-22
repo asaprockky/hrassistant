@@ -26,9 +26,13 @@ class User(Base):
     username = Column(String(30), unique=True, nullable=False)
     role = Column(String(30))
     password = Column(String(100), nullable=False)
-    
-    company_id = Column(Integer, ForeignKey("companies.id"))
+
+    company_id = Column(Integer, ForeignKey("companies.id"), nullable=True)
     company = relationship("Company", back_populates="users")
+
+    # Relationship to StartedTest
+    started_tests = relationship("StartedTest", back_populates="user")
+    user_answers = relationship("UserAnswer", back_populates="user")
 
 # --- Created_Vacancy Model ---
 class Created_Vacancy(Base):
@@ -66,7 +70,6 @@ class Candidate(Base):
     vacancy = relationship("Created_Vacancy", back_populates="candidates")
 
     # Relationship to answers
-    user_answers = relationship("UserAnswer", back_populates="candidate")
 
 # --- Question Model (The Single, Correct Definition) ---
 class Question(Base):
@@ -92,11 +95,21 @@ class UserAnswer(Base):
     is_correct = Column(Boolean, nullable=False) # Tracks correctness
     score_awarded = Column(Float, default=0.0) # Tracks points awarded for the answer
     
-    candidate_id = Column(Integer, ForeignKey("candidates.id"))
+    user_id = Column(Integer, ForeignKey("users.id"))
     question_id = Column(Integer, ForeignKey("user_questions.id"))
     
     answered_at = Column(DateTime, default=func.now()) # When the answer was recorded
 
     # Relationships
-    candidate = relationship("Candidate", back_populates="user_answers")
+    user = relationship("User", back_populates="user_answers")
     question = relationship("Question", back_populates="user_answers")
+
+
+class StartedTest(Base):
+    __tablename__ = "started_test"
+
+    test_id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id")) 
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    user = relationship("User", back_populates="started_tests")

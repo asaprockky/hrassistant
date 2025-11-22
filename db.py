@@ -6,6 +6,8 @@ from database import models
 import json
 
 
+Base.metadata.create_all(bind=engine)
+
 # Create tables in the database
 def seed_questions():
     db: Session = SessionLocal()

@@ -2,7 +2,7 @@ import random
 from fastapi import APIRouter
 from sqlalchemy import func
 from database.database import SessionLocal
-from database.models import Question, User, UserAnswer
+from database.models import Question, User, UserAnswer, StartedTest
 from schemas.user_schema import AnswerCreate, AnswerResponse
 from routers.login import get_current_user
 
@@ -85,11 +85,14 @@ def get_question():
         "indicator": f"Current Level: {level}/9"
     }
 
-def get_question():
-    print("api has been used")
+@router.get("start_test")
+def start_test():
     level = user_state["level"]
     difficulty = get_difficulty(level)
     q = get_question_by_level(level)
+    question_db = StartedTest(
+
+    )
     return {
         "question": q.text,
         "options": q.options,
