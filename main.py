@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from database.database import SessionLocal, engine
 from database.models import User
 from routers import login, main_page, questions
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
@@ -13,6 +14,14 @@ app.include_router(main_page.router, prefix= "", tags= ["vacancies"])
 app.include_router(questions.router, prefix= "", tags= ["tests"])
 
 
+origins = ["*"]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,          # List of allowed origins
+    allow_credentials=True,         # Allow cookies, authorization headers
+    allow_methods=["*"],            # Allow all HTTP methods
+    allow_headers=["*"],            # Allow all headers
+)
 def get_data():
     db = SessionLocal()
     try:
