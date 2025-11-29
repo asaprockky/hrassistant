@@ -1,7 +1,7 @@
 import random
 from fastapi import APIRouter
 from sqlalchemy import func
-from database.database import SessionLocal
+from database.database import SessionLocal, get_db
 from database.models import Question, User, UserAnswer, StartedTest
 from schemas.user_schema import AnswerCreate, AnswerResponse
 from routers.login import get_current_user

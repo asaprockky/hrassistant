@@ -24,3 +24,11 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # Base class for our ORM models
 Base = declarative_base()
+# database/database.py
+
+def get_db():
+    db = SessionLocal()  # 1. Create the session
+    try:
+        yield db         # 2. Give the session to the router
+    finally:
+        db.close()       # 3. Close the session (Even if code crashes!)
