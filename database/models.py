@@ -111,5 +111,7 @@ class StartedTest(Base):
     test_id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id")) 
     created_at = Column(DateTime, default=datetime.utcnow)
-
+    current_level = Column(Integer, default=1)
+    current_score = Column(Float, default=0.0)
+    is_active = Column(Boolean, default=True)
     user = relationship("User", back_populates="started_tests")
