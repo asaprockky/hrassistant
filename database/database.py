@@ -6,9 +6,9 @@ from sqlalchemy.orm import sessionmaker
 #DATABASE_URL = "sqlite:///./test.db"
 
 ## internal url
-DATABASE_URL = "postgresql://asap:SC4DMhaYXca3I5KOrKYGZnHVQuFcXe05@dpg-d49n53f5r7bs73dv8sug-a/hrassistant"
+DATABASE_URL = "postgresql://asap:pzzPoFUjWFYEfblTYFRW8P46AMC7P6Yr@dpg-d4lfcl3e5dus73foo3i0-a/hrassistant_2k4y"
 ## external url
-#DATABASE_URL = "postgresql://asap:SC4DMhaYXca3I5KOrKYGZnHVQuFcXe05@dpg-d49n53f5r7bs73dv8sug-a.oregon-postgres.render.com/hrassistant"
+#DATABASE_URL = "postgresql://asap:pzzPoFUjWFYEfblTYFRW8P46AMC7P6Yr@dpg-d4lfcl3e5dus73foo3i0-a.oregon-postgres.render.com/hrassistant_2k4y"
 
 # Create SQLAlchemy engine
 if DATABASE_URL.startswith("sqlite"):

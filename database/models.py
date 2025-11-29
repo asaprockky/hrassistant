@@ -17,6 +17,7 @@ class Company(Base):
     # Relationships
     users = relationship("User", back_populates="company")
     created_vacancies = relationship("Created_Vacancy", back_populates="company")
+    assigned_tests = relationship("StartedTest", back_populates="owner_company")
 
 # --- User Model ---
 class User(Base):
@@ -33,6 +34,14 @@ class User(Base):
     # Relationship to StartedTest
     started_tests = relationship("StartedTest", back_populates="user")
     user_answers = relationship("UserAnswer", back_populates="user")
+
+class UserProfile(Base):
+    __tablename__ = "user_profile"
+    userid = Column(Integer, ForeignKey("users.id"), primary_key=True)
+    name = Column(String(30), nullable = False)
+    surname = Column(String(30), nullable = False)
+    age = Column(Integer, nullable = False)
+
 
 # --- Created_Vacancy Model ---
 class Created_Vacancy(Base):
@@ -110,8 +119,12 @@ class StartedTest(Base):
 
     test_id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id")) 
+    owner = Column(Integer, ForeignKey("companies.id"))
+    deadline = Column(DateTime, nullable= True)
     created_at = Column(DateTime, default=datetime.utcnow)
     current_level = Column(Integer, default=1)
     current_score = Column(Float, default=0.0)
     is_active = Column(Boolean, default=True)
+
     user = relationship("User", back_populates="started_tests")
+    owner_company = relationship("Company")

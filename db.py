@@ -1,11 +1,18 @@
+import json
+from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 from database.database import Base, engine
 from database.database import SessionLocal
+# Assuming your models are correctly defined in database.models/database
 from database.models import * 
 from database import models
 import json
 
 
+# NOTE ON SCHEMA CHANGES: Base.metadata.create_all() only creates tables
+# that do not exist. If you change a model (like adding the 'owner' column
+# to StartedTest), you must manually delete your old database file (e.g., 'test.db')
+# and run this script again to apply the new schema.
 Base.metadata.create_all(bind=engine)
 
 # Create tables in the database
@@ -44,7 +51,7 @@ def seed_questions():
             category=q[0],
             text=q[1],
             correct_answer=q[2],
-            options=q[3],
+            options=json.dumps(q[3]), # JSON.dumps() is needed for the JSON column
             difficulty_level=q[4],
             points=q[5]
         )
@@ -54,5 +61,106 @@ def seed_questions():
     db.close()
     print("✅ Questions added successfully!")
 
+
+def insert_test_data(db: Session):
+    """
+    Inserts necessary test data (Company, User, Questions, and two StartedTest records) 
+    into the given SQLAlchemy session.
+    """
+
+    print("--- Inserting Test Data ---")
+    
+    # --- 1. Create Company ---
+    company1 = Company(
+        name="TechTest Corp",
+        email="hr@techtest.com",
+        INN="9876543210",
+        phone_number="555-9000"
+    )
+    db.add(company1)
+    db.commit()
+    db.refresh(company1)
+    print(f"1. Created Company: {company1.name} (ID: {company1.id})")
+
+    # --- 2. Create User ---
+    user1 = User(
+        username="user",
+        role="Candidate",
+        password="1234", # Should be hashed in production
+    )
+    db.add(user1)
+    db.commit()
+    db.refresh(user1)
+    print(f"2. Created User: {user1.username} (ID: {user1.id})")
+
+    # --- 3. Create User Profile ---
+    profile1 = UserProfile(
+        userid=user1.id,
+        name="Alex",
+        surname="Smith",
+        age=28
+    )
+    db.add(profile1)
+    print("3. Created UserProfile.")
+
+    # --- 4. Create Questions ---
+    # Fetch questions needed for foreign key constraint in UserAnswer
+    q_python = db.query(Question).filter(Question.category == 'python').first()
+    q_math = db.query(Question).filter(Question.category == 'math').first()
+    print(f"4. Re-fetched sample questions for FKs.")
+    
+    # --- 5. Create StartedTest records ---
+
+    # A. Active/In-progress Test (for /active_test)
+    active_test = StartedTest(
+        user_id=user1.id,
+        owner=company1.id,
+        deadline=datetime.now() + timedelta(days=5),
+        current_level=2,
+        current_score=5.5,
+        is_active=True
+    )
+    db.add(active_test)
+    
+    # B. Passive/Completed Test (for /test_history)
+    completed_test = StartedTest(
+        user_id=user1.id,
+        owner=company1.id,
+        deadline=datetime.now() - timedelta(days=10), # Expired/Completed
+        created_at=datetime.now() - timedelta(weeks=4),
+        current_level=9, # Finished all levels
+        current_score=98.0, 
+        is_active=False
+    )
+    db.add(completed_test)
+    db.commit()
+    print("5. Created 1 Active Test and 1 Completed Test.")
+
+    # --- 6. Create a sample UserAnswer for the completed test ---
+    if q_python:
+        answer = UserAnswer(
+            user_id=user1.id,
+            question_id=q_python.id,
+            user_answer="str",
+            is_correct=True,
+            score_awarded=q_python.points
+        )
+        db.add(answer)
+        db.commit()
+        print("6. Added sample UserAnswer for the completed test.")
+        
+    print("--- Test Data Insertion Complete ---")
+
 if __name__ == "__main__":
-    seed_questions()
+    # Ensure tables are created before inserting data
+    Base.metadata.create_all(bind=engine) 
+
+    # Seed the generic questions
+    seed_questions() 
+
+    # Seed the company, user, test, and answer data
+    db = SessionLocal()
+    try:
+        insert_test_data(db)
+    finally:
+        db.close()

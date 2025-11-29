@@ -100,6 +100,7 @@ def signup(user_data: UserCreate, response: Response,  db: Session = Depends(get
     hashed_pwd = get_password_hash(user_data.password)
     new_user = User(
         username = user_data.username,
+        role = user_data.role,
         password = hashed_pwd
     )
     db.add(new_user)

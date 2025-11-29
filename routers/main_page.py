@@ -43,7 +43,7 @@ async def get_vacancies(db: Session = Depends(get_data), current_user: User = De
     vacancies = db.query(Created_Vacancy).filter(Created_Vacancy.company_id == company.id).all()
     return vacancies
 
-
+    
 @router.post("/vacancies/upload_resumes")
 async def upload_resumes(file: UploadFile = File(...)):
     UPLOAD_DIR = ''
@@ -74,3 +74,6 @@ async def upload_resumes(file: UploadFile = File(...)):
 
     finally:
         db.close()
+
+
+
