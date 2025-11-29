@@ -9,7 +9,7 @@ router = APIRouter()
 
     
 
-@router.get("tests/active")
+@router.get("/tests/active")
 def get_active_test(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """
     Retrieves the details of the single currently active/in-progress test for the user.
@@ -36,7 +36,7 @@ def get_active_test(db: Session = Depends(get_db), user: User = Depends(get_curr
         }
     
 
-@router.get("tests/passed")
+@router.get("/tests/passed")
 def get_test_history(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """
     Retrieves a list of all tests assigned to the user (including completed, pending, or expired).
