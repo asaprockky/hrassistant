@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status, Request
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from jose import jwt, JWTError
@@ -30,28 +30,50 @@ def get_data():
     finally:
         db.close()
 
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
-    # Prepare the exception - we use this in multiple places below
+# This is the necessary change to make the browser (which uses cookies) work.
+def get_current_user(request: Request, db: Session = Depends(get_db)):
+    """
+    Dependency function to retrieve the current authenticated User.
+    It checks the 'access_token' cookie first (for browser sessions) 
+    and falls back to the 'Authorization: Bearer' header (for Swagger/API tools).
+    
+    The original function failed because it only relied on OAuth2PasswordBearer, 
+    which ignores the Cookie header.
+    """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    
+    # 1. Check the Cookie Header (What the browser sends)
+    token = request.cookies.get("access_token")
+    
+    # 2. Check the Authorization Header (What Swagger/API clients send)
+    if not token:
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.startswith("Bearer "):
+            token = auth_header.split(" ")[1]
+            
+    if not token:
+        # If no token found in either location, we raise the exception
+        raise credentials_exception
 
     try:
-        # 1. Decode the token
+        # 3. Decode the token (Verifies signature and expiration)
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         
-        # 2. Extract the user ID (matches what you put in the token during login)
+        # 4. Extract the user ID
         user_id: int = payload.get("user_id")
         
         if user_id is None:
             raise credentials_exception
             
     except JWTError:
+        # Handle expired or tampered tokens
         raise credentials_exception
 
-    # 3. Fetch the user from the DB
+    # 5. Fetch the user from the DB to ensure they still exist
     user = db.query(User).filter(User.id == user_id).first()
     
     if user is None:
