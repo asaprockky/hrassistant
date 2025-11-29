@@ -136,3 +136,25 @@ def start_test(
         "indicator": f"Current Level: {active_test.current_level}/9"
     }
 
+
+@router.post("/finish_test")
+def finish_test(
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user)):
+    test_session = db.query(StartedTest)
+    if not test_session:
+        raise HTTPException(status_code= 400, detail= "No active test to finish")
+    test_session.is_active = False
+
+    total_questions = db.query(UserAnswer).filter(
+        UserAnswer.user_id == user.id,
+        UserAnswer.answered_at >= test_session.created_at # rudimentary check
+    ).count()
+
+    db.commit()
+    return {
+        "message": "Test completed successfully",
+        "final_score": test_session.current_score,
+        "final_level": test_session.current_level,
+        "total_questions_answered": total_questions
+    }
