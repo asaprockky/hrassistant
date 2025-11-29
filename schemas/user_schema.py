@@ -15,6 +15,10 @@ class UserResponse(BaseModel):
     class Config:
         orm_mode = True
 
+class EmailVerification(BaseModel):
+    email: str
+
+
 
 class VacancyResponse(BaseModel):
     id: int

@@ -121,3 +121,9 @@ def signup(user_data: UserCreate, response: Response,  db: Session = Depends(get
     # E. Return the token in the response body (Standard for API consumption)
     return {"access_token": access_token}
 
+
+# @router.post("verify-email")
+# def verify_email(    response: Response,
+#     db: Session = Depends(get_data)):
+#     user = get_current_user
+
