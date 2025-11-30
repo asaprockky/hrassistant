@@ -1,14 +1,22 @@
+import datetime
+from email.message import EmailMessage
+import random
+import smtplib
+import ssl
+from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException, Response, status, Request
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from jose import jwt, JWTError
-
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from database import models
 from database.database import SessionLocal, get_db
 from database.models import StartedTest, User
 from auth.jwt_handler import create_access_token
 from passlib.context import CryptContext
 
-from schemas.user_schema import UserCreate
+from schemas.user_schema import UserCreate, EmailUpdate
 
 router = APIRouter(prefix="/users")
 
@@ -142,10 +150,4 @@ def signup(user_data: UserCreate, response: Response,  db: Session = Depends(get
 
     # E. Return the token in the response body (Standard for API consumption)
     return {"access_token": access_token}
-
-
-# @router.post("verify-email")
-# def verify_email(    response: Response,
-#     db: Session = Depends(get_data)):
-#     user = get_current_user
 

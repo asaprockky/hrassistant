@@ -41,6 +41,7 @@ class UserProfile(Base):
     name = Column(String(30), nullable = False)
     surname = Column(String(30), nullable = False)
     age = Column(Integer, nullable = False)
+    email = Column(String(30), nullable = True)
 
 
 # --- Created_Vacancy Model ---

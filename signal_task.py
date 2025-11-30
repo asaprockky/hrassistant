@@ -1,28 +1,29 @@
-import signal
-import time
-import sys
-import os
+from email.message import EmailMessage
+import ssl
+import smtplib
+sender = "shokirovabdulfayz@gmail.com"
+password = "hqic ybjr ptdz wkgd"
+reciever = "sabdulfayiz@gmail.com"
 
-def on_sighup(signum, frame):
-    now = time.time()
-    readable_time = time.ctime(now)
-    print(f"\n[Alert] SIGHUP signal received at: {readable_time}")
 
-def on_sigint(signum, frame):
-    print("\n[Alert] You pressed CTRL+C! Press CTRL+\\ to actually exit.")
 
-def on_sigquit(signum, frame):
-    print("\n[Alert] SIGQUIT received. Good bye!")
-    sys.exit(0)
+subject  = 'new  video test'
 
-if __name__ == "__main__":
-    my_pid = os.getpid()
-    print(f"Program Running. PID is: {my_pid}")
-    print("Try pressing CTRL+C or CTRL+\\")
-    print(f"To test SIGHUP, open a new terminal and type: kill -HUP {my_pid}")
+body = """
+I published new message
+"""
 
-    signal.signal(signal.SIGINT, on_sigint)
-    signal.signal(signal.SIGQUIT, on_sigquit)
-    signal.signal(signal.SIGHUP, on_sighup)
-    while True:
-        time.sleep(1)
+em = EmailMessage()
+em["From"] = sender
+em["To"] = reciever
+em["Subject"] = subject
+
+em.set_content(body)
+
+context = ssl.create_default_context()
+
+
+with smtplib.SMTP_SSL('smtp.gmail.com', 465, context= context) as smtp:
+    smtp.login(sender, password)
+    smtp.sendmail(sender, reciever, em.as_string())
+    print("success")

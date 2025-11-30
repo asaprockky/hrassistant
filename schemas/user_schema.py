@@ -7,7 +7,8 @@ class UserCreate(BaseModel):
     role : str
     password: str
 
-
+class EmailUpdate(BaseModel):
+    email : str
 class UserResponse(BaseModel):
     id: int
     username: str
@@ -15,8 +16,6 @@ class UserResponse(BaseModel):
     class Config:
         orm_mode = True
 
-class EmailVerification(BaseModel):
-    email: str
 
 
 
