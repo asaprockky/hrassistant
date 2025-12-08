@@ -17,7 +17,11 @@ app.include_router(questions.router, prefix= "", tags= ["tests"])
 
 origins = [
     "http://localhost:3000",   # frontend dev URL
+<<<<<<< HEAD
     "https://localhost:5173",  # production URL
+=======
+    "http://localhost:5173",  # production URL
+>>>>>>> 36ee02416eb636dc1e7df5924e9e6eaf65832981
 ]
 app.add_middleware(
     CORSMiddleware,
