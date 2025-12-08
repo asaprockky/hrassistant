@@ -3,7 +3,7 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from database.database import SessionLocal, engine
 from database.models import User
-from routers import email, login, main_page, questions, tester_main 
+from routers import email, login, main_page, questions, tester_main, user_profile
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
@@ -14,14 +14,12 @@ app.include_router(email.router, prefix= "", tags= ["email"])
 app.include_router(main_page.router, prefix= "", tags= ["vacancies"])
 app.include_router(tester_main.router, prefix= "", tags= ["my-tests"])
 app.include_router(questions.router, prefix= "", tags= ["tests"])
+app.include_router(user_profile.router, prefix= "", tags= ["user-profile"])
 
 origins = [
     "http://localhost:3000",   # frontend dev URL
-<<<<<<< HEAD
     "https://localhost:5173",  # production URL
-=======
-    "http://localhost:5173",  # production URL
->>>>>>> 36ee02416eb636dc1e7df5924e9e6eaf65832981
+    "http://localhost:5173",  
 ]
 app.add_middleware(
     CORSMiddleware,

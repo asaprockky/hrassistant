@@ -1,8 +1,38 @@
 from datetime import date
+from typing import Optional
 from database.enums import Role
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, EmailStr
 
 
+
+
+class CompanyOut(BaseModel):
+    id: int
+    name: str
+    phone_number: Optional[str]
+    INN: Optional[str]
+    email: Optional[EmailStr]
+
+    class Config:
+        orm_mode = True
+
+class UserProfileOut(BaseModel):
+    name: str
+    surname: str
+    age: int
+    email: Optional[EmailStr]
+
+    class Config:
+        orm_mode = True
+class UserProfilePageOut(BaseModel):
+    id: int
+    username: str
+    role: str
+    company: Optional[CompanyOut]
+    profile: Optional[UserProfileOut]
+
+    class Config:
+        orm_mode = True
 class UserCreate(BaseModel):
     username: str
     password: str
