@@ -2,7 +2,7 @@ from database.database import Base
 from sqlalchemy import JSON, Column, Date, Integer, String, ForeignKey, Boolean, Text, Float, DateTime, Enum as SAEnum
 from sqlalchemy.orm import relationship
 from datetime import datetime
-from enums import Role
+from database.enums import Role
 from sqlalchemy.sql import func
 
 # --- Company Model ---
