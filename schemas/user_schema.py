@@ -14,9 +14,11 @@ class CompanyOut(BaseModel):
     email: Optional[EmailStr]
 
     class Config:
-        orm_mode = True
+        # Renamed to from_attributes in Pydantic v2
+        orm_mode = True 
 
 class UserProfileOut(BaseModel):
+    # Assuming UserProfile SQLAlchemy model has these fields
     name: str
     surname: str
     age: int
@@ -24,15 +26,20 @@ class UserProfileOut(BaseModel):
 
     class Config:
         orm_mode = True
+
 class UserProfilePageOut(BaseModel):
     id: int
     username: str
     role: str
-    company: Optional[CompanyOut]
-    profile: Optional[UserProfileOut]
+    company: Optional[CompanyOut] # Pydantic model for the related Company data
+    profile: Optional[UserProfileOut] # Pydantic model for the related Profile data
 
     class Config:
         orm_mode = True
+
+
+
+        
 class UserCreate(BaseModel):
     username: str
     password: str

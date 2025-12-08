@@ -10,31 +10,36 @@ router = APIRouter()
     
 @router.get("/tests/active")
 def get_active_tests(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """
+    Retrieves a list of active tests. 
+    Returns the same structure as the history endpoint (List of objects).
+    """
     active_tests = db.query(StartedTest).join(StartedTest.owner_company).filter(
         StartedTest.user_id == user.id,
         StartedTest.is_active == True
     ).all()
 
+    # Mirroring the logic of your history endpoint:
+    # If no tests are found, return a message (or you could just return an empty list [])
     if not active_tests:
-        return {
-            "is_active": False,
-            "message": "No active test found. Please check your history for pending or completed tests."
-        }
+        return {"message": "No active test found. Please check your history for pending or completed tests."}
 
-    # Return list of summaries
+    # Map to list of summaries (matching the 'passed' endpoint structure)
     tests_summary = [
         {
             "test_id": t.test_id,
             "created_by": t.owner_company.name,
             "created_at": t.created_at,
-            "deadline": t.deadline
+            "deadline": t.deadline,
+            # Added this field so the object shape is identical to the history endpoint
+            "final_score": t.current_score 
         } for t in active_tests
     ]
 
-    return {
-        "is_active": True,
-        "tests": tests_summary
-    }
+    # Return the list directly, removing the {"is_active": True, ...} wrapper
+    return tests_summary
+
+
 
 @router.get("/tests/passed")
 def get_test_history(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
