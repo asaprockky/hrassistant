@@ -26,22 +26,20 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String(30), unique=True, nullable=False)
-    role = Column(SAEnum(Role), default = Role.USER, nullable = False)
+    role = Column(SAEnum(Role), default=Role.USER, nullable=False)
     password = Column(String(100), nullable=False)
     company_id = Column(Integer, ForeignKey("companies.id"), nullable=True)
     company = relationship("Company", back_populates="users")
 
-    # Relationship to StartedTest
+    # Merged profile fields
+    name = Column(String(30), nullable=False)
+    surname = Column(String(30), nullable=False)
+    age = Column(Integer, nullable=False)
+    email = Column(String(30), nullable=True)
+
+    # Relationships
     started_tests = relationship("StartedTest", back_populates="user")
     user_answers = relationship("UserAnswer", back_populates="user")
-
-class UserProfile(Base):
-    __tablename__ = "user_profile"
-    userid = Column(Integer, ForeignKey("users.id"), primary_key=True)
-    name = Column(String(30), nullable = False)
-    surname = Column(String(30), nullable = False)
-    age = Column(Integer, nullable = False)
-    email = Column(String(30), nullable = True)
 
 
 # --- Created_Vacancy Model ---

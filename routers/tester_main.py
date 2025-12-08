@@ -2,7 +2,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends
 from database.database import get_db
 from sqlalchemy.orm import Session
-from database.models import User, UserProfile, StartedTest
+from database.models import User, StartedTest
 from routers.login import get_current_user
 router = APIRouter()
 

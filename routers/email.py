@@ -173,7 +173,7 @@ def confirm_email_verification(
     
     try:
         # Find the UserProfile object in the DB session
-        user_profile = db.query(models.UserProfile).filter(models.UserProfile.userid == user_id).first()
+        user_profile = db.query(models.User).filter(models.User.userid == user_id).first()
         
         if user_profile:
             # Update the email and verification status
@@ -359,9 +359,9 @@ def insert_test_data(db: Session):
     # --- 3. Create User Profile (Only if it doesn't exist) ---
     # We assume a profile should exist if the user was just created, 
     # but we check to prevent integrity errors on the 'userid' foreign key/primary key.
-    profile1 = db.query(models.UserProfile).filter(models.UserProfile.userid == user1.id).first()
+    profile1 = db.query(models.User).filter(models.User.userid == user1.id).first()
     if not profile1:
-        profile1 = models.UserProfile(
+        profile1 = models.User(
             userid=user1.id,
             name="Alex",
             surname="Smith",

@@ -21,8 +21,10 @@ class UserProfileOut(BaseModel):
     # Assuming UserProfile SQLAlchemy model has these fields
     name: str
     surname: str
+    username : str
     age: int
     email: Optional[EmailStr]
+
 
     class Config:
         orm_mode = True
