@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from jose import jwt, JWTError
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from database import models
+from database import enums, models
 from database.database import SessionLocal, get_db
 from database.models import StartedTest, User
 from auth.jwt_handler import create_access_token
@@ -112,7 +112,7 @@ async def login(
         httponly=True,
         secure=False,
         samesite="lax",
-        max_age=3600,
+        max_age=604800,
     )
 
     return {"access_token": access_token}
@@ -130,7 +130,7 @@ def signup(user_data: UserCreate, response: Response,  db: Session = Depends(get
     hashed_pwd = get_password_hash(user_data.password)
     new_user = User(
         username = user_data.username,
-        role = user_data.role,
+        role= user_data.role,
         password = hashed_pwd
     )
     db.add(new_user)
@@ -142,12 +142,10 @@ def signup(user_data: UserCreate, response: Response,  db: Session = Depends(get
     response.set_cookie(
             key="access_token",
             value=access_token,
-            httponly=True,   # Essential security feature
-            secure=False,    # Change to True if using HTTPS
+            httponly=True,   
+            secure=False,  
             samesite="lax",
-            max_age=3600
+            max_age=604800
         )
-
-    # E. Return the token in the response body (Standard for API consumption)
     return {"access_token": access_token}
 

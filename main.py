@@ -15,8 +15,10 @@ app.include_router(main_page.router, prefix= "", tags= ["vacancies"])
 app.include_router(tester_main.router, prefix= "", tags= ["my-tests"])
 app.include_router(questions.router, prefix= "", tags= ["tests"])
 
-
-origins = ["*"]
+origins = [
+    "http://localhost:3000",   # frontend dev URL
+    "https://localhost:5173",  # production URL
+]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,          # List of allowed origins

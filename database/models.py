@@ -1,7 +1,8 @@
 from database.database import Base
-from sqlalchemy import JSON, Column, Date, Integer, String, ForeignKey, Boolean, Text, Float, DateTime
+from sqlalchemy import JSON, Column, Date, Integer, String, ForeignKey, Boolean, Text, Float, DateTime, Enum as SAEnum
 from sqlalchemy.orm import relationship
 from datetime import datetime
+from enums import Role
 from sqlalchemy.sql import func
 
 # --- Company Model ---
@@ -25,9 +26,8 @@ class User(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String(30), unique=True, nullable=False)
-    role = Column(String(30))
+    role = Column(SAEnum(Role), default = Role.USER, nullable = False)
     password = Column(String(100), nullable=False)
-
     company_id = Column(Integer, ForeignKey("companies.id"), nullable=True)
     company = relationship("Company", back_populates="users")
 
