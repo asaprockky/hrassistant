@@ -1,15 +1,20 @@
-from database.database import Base
+# models.py
+import uuid
+from datetime import datetime
 from sqlalchemy import JSON, Column, Date, Integer, String, ForeignKey, Boolean, Text, Float, DateTime, Enum as SAEnum
 from sqlalchemy.orm import relationship
-from datetime import datetime
-from database.enums import Role
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
+
+# Ensure these imports match your project structure
+from database.database import Base
+from database.enums import Role
 
 # --- Company Model ---
 class Company(Base):
     __tablename__ = "companies"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     name = Column(String(50), nullable=False)
     phone_number = Column(String(20))
     INN = Column(String(20))
@@ -24,14 +29,16 @@ class Company(Base):
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     username = Column(String(30), unique=True, nullable=False)
     role = Column(SAEnum(Role), default=Role.USER, nullable=False)
     password = Column(String(100), nullable=False)
-    company_id = Column(Integer, ForeignKey("companies.id"), nullable=True)
+    
+    # FIXED: Type must match Company.id (UUID)
+    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=True)
     company = relationship("Company", back_populates="users")
 
-    # Merged profile fields
+    # Profile fields
     name = Column(String(30), nullable=False)
     surname = Column(String(30), nullable=False)
     age = Column(Integer, nullable=False)
@@ -46,7 +53,7 @@ class User(Base):
 class Created_Vacancy(Base):
     __tablename__ = 'created_vacancies'
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     job_name = Column(String(100), nullable=False)
     job_description = Column(Text, nullable=False)
     tag = Column(Text, nullable=False)
@@ -55,71 +62,72 @@ class Created_Vacancy(Base):
     candidate_count = Column(Integer, default=0)
     is_available = Column(Boolean, default=True)
 
-    company_id = Column(Integer, ForeignKey("companies.id"))
+    # FIXED: Type must match Company.id (UUID)
+    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"))
     company = relationship("Company", back_populates="created_vacancies")
 
-    # Relationship with candidates
     candidates = relationship("Candidate", back_populates="vacancy")
 
 # --- Candidate Model ---
 class Candidate(Base):
     __tablename__ = "candidates"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     full_name = Column(String(100), nullable=False)
     resume_loc = Column(String(255), nullable=False)
     ai_score = Column(Float, default=0.0)
-    created_at = Column(DateTime, default=func.now()) # Use DateTime and func.now() for better database tracking
+    created_at = Column(DateTime, default=func.now())
     education = Column(String(255))
     experience = Column(String(255))
     skills = Column(String(255))
 
-    vacancy_id = Column(Integer, ForeignKey("created_vacancies.id"))
+    # FIXED: Type must match Created_Vacancy.id (UUID)
+    vacancy_id = Column(UUID(as_uuid=True), ForeignKey("created_vacancies.id"))
     vacancy = relationship("Created_Vacancy", back_populates="candidates")
 
-    # Relationship to answers
-
-# --- Question Model (The Single, Correct Definition) ---
+# --- Question Model ---
 class Question(Base):
     __tablename__ = "user_questions"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     text = Column(String, nullable=False)
-    difficulty_level = Column(Integer, nullable=False) # 1-9
+    difficulty_level = Column(Integer, nullable=False)
     correct_answer = Column(String, nullable=False)
-    options = Column(JSON) # e.g. ["option1", "option2", ...]
-    category = Column(String(50)) # e.g. math, python
+    options = Column(JSON)
+    category = Column(String(50))
     points = Column(Float)
 
-    # Relationship to answers
     user_answers = relationship("UserAnswer", back_populates="question")
 
 # --- UserAnswer Model ---
 class UserAnswer(Base):
     __tablename__ = "user_answers"
 
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_answer = Column(String, nullable=False)
-    is_correct = Column(Boolean, nullable=False) # Tracks correctness
-    score_awarded = Column(Float, default=0.0) # Tracks points awarded for the answer
+    is_correct = Column(Boolean, nullable=False)
+    score_awarded = Column(Float, default=0.0)
     
-    user_id = Column(Integer, ForeignKey("users.id"))
-    question_id = Column(Integer, ForeignKey("user_questions.id"))
+    # FIXED: Types must match User.id and Question.id (UUID)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    question_id = Column(UUID(as_uuid=True), ForeignKey("user_questions.id"))
     
-    answered_at = Column(DateTime, default=func.now()) # When the answer was recorded
+    answered_at = Column(DateTime, default=func.now())
 
-    # Relationships
     user = relationship("User", back_populates="user_answers")
     question = relationship("Question", back_populates="user_answers")
 
-
+# --- Started Test Model ---
 class StartedTest(Base):
     __tablename__ = "started_test"
 
-    test_id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id")) 
-    owner = Column(Integer, ForeignKey("companies.id"))
-    deadline = Column(DateTime, nullable= True)
+    test_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    
+    # FIXED: Types must match User.id and Company.id (UUID)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id")) 
+    owner = Column(UUID(as_uuid=True), ForeignKey("companies.id"))
+    
+    deadline = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     current_level = Column(Integer, default=1)
     current_score = Column(Float, default=0.0)

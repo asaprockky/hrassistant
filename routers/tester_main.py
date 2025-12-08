@@ -4,23 +4,17 @@ from database.database import get_db
 from sqlalchemy.orm import Session
 from database.models import User, StartedTest
 from routers.login import get_current_user
+import uuid
 router = APIRouter()
 
 
     
 @router.get("/tests/active")
 def get_active_tests(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    """
-    Retrieves a list of active tests. 
-    Returns the same structure as the history endpoint (List of objects).
-    """
     active_tests = db.query(StartedTest).join(StartedTest.owner_company).filter(
         StartedTest.user_id == user.id,
         StartedTest.is_active == True
     ).all()
-
-    # Mirroring the logic of your history endpoint:
-    # If no tests are found, return a message (or you could just return an empty list [])
     if not active_tests:
         return {"message": "No active test found. Please check your history for pending or completed tests."}
 

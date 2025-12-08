@@ -1,31 +1,19 @@
-from sqlalchemy import create_engine, text
-from database.database import DATABASE_URL
-from database.enums import Role
-from sqlalchemy.orm import sessionmaker
+# init_db.py
+import asyncio
+from database.database import engine, Base
+# Import all your models here so SQLAlchemy knows about them
+from database.models import Company, User, Created_Vacancy, Candidate, Question, UserAnswer, StartedTest
 
-from database.models import User
-   # same as in your server
+def reset_database():
+    print("🗑️  Dropping all existing tables...")
+    # This deletes all tables defined in your models
+    Base.metadata.drop_all(bind=engine)
+    print("✅ Tables dropped.")
 
-
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(bind=engine)
-
-def update_user_role(user_id: int, new_role=Role.USER):
-    session = SessionLocal()
-    try:
-        user = session.query(User).filter(User.id == user_id).first()
-        if not user:
-            print(f"User with id {user_id} not found.")
-            return
-
-        user.role = new_role
-        session.commit()
-        print(f"Updated user id={user_id} to role '{new_role.name}'")
-    except Exception as e:
-        session.rollback()
-        print("Error:", e)
-    finally:
-        session.close()
+    print("🛠️  Creating new tables with UUID support...")
+    # This creates the new tables based on your updated models
+    Base.metadata.create_all(bind=engine)
+    print("✅ New tables created successfully!")
 
 if __name__ == "__main__":
-    update_user_role(user_id=1, new_role=Role.USER)
+    reset_database()

@@ -15,6 +15,7 @@ from database.database import SessionLocal, get_db
 from database.models import StartedTest, User
 from auth.jwt_handler import create_access_token
 from passlib.context import CryptContext
+import uuid
 
 from schemas.user_schema import UserCreate, EmailUpdate
 
@@ -37,17 +38,7 @@ def get_data():
         yield db
     finally:
         db.close()
-
-# This is the necessary change to make the browser (which uses cookies) work.
 def get_current_user(request: Request, db: Session = Depends(get_db)):
-    """
-    Dependency function to retrieve the current authenticated User.
-    It checks the 'access_token' cookie first (for browser sessions) 
-    and falls back to the 'Authorization: Bearer' header (for Swagger/API tools).
-    
-    The original function failed because it only relied on OAuth2PasswordBearer, 
-    which ignores the Cookie header.
-    """
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -71,18 +62,27 @@ def get_current_user(request: Request, db: Session = Depends(get_db)):
         # 3. Decode the token (Verifies signature and expiration)
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         
-        # 4. Extract the user ID
-        user_id: int = payload.get("user_id")
+        # 4. Extract the user ID (String format)
+        user_id_str: str = payload.get("user_id") # Renamed for clarity 
         
-        if user_id is None:
+        if user_id_str is None:
             raise credentials_exception
+            
+        # 🟢 CRITICAL STEP ADDED 🟢
+        # Convert the string from the token into a Python UUID object
+        try:
+            user_id_uuid = uuid.UUID(user_id_str)
+        except ValueError:
+            # Handle case where the string isn't a valid UUID format
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid user ID format in token")
             
     except JWTError:
         # Handle expired or tampered tokens
         raise credentials_exception
 
-    # 5. Fetch the user from the DB to ensure they still exist
-    user = db.query(User).filter(User.id == user_id).first()
+    # 5. Fetch the user from the DB using the UUID object
+    # This comparison now works: UUID Column == Python UUID Object
+    user = db.query(User).filter(User.id == user_id_uuid).first() 
     
     if user is None:
         raise credentials_exception
@@ -102,7 +102,7 @@ async def login(
         raise HTTPException(status_code=400, detail="Invalid username or password")
 
     access_token = create_access_token(
-        data={"user_id": user.id, "username": user.username}
+        data={"user_id": str(user.id), "username": user.username}
     )
 
     # set JWT cookie
@@ -137,7 +137,7 @@ def signup(user_data: UserCreate, response: Response,  db: Session = Depends(get
     db.commit()
     db.refresh(new_user)
     access_token = create_access_token(
-        data={"user_id": new_user.id, "username": new_user.username}
+        data={"user_id": str(new_user.id), "username": new_user.username}
     )
     response.set_cookie(
             key="access_token",
