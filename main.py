@@ -20,6 +20,7 @@ origins = [
     "http://localhost:3000",   # frontend dev URL
     "https://localhost:5173",  # production URL
     "http://localhost:5173",  
+    "https://hr-assistant-j2u1.vercel.app"
 ]
 app.add_middleware(
     CORSMiddleware,
