@@ -12,7 +12,7 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from database import enums, models
 from database.database import SessionLocal, get_db
-from database.models import StartedTest, User
+from database.models import User
 from auth.jwt_handler import create_access_token
 from passlib.context import CryptContext
 import uuid

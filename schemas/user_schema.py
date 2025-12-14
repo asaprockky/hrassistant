@@ -1,5 +1,6 @@
 from datetime import date
 from typing import Optional
+import uuid
 from database.enums import Role
 from pydantic import BaseModel, Field, EmailStr
 
