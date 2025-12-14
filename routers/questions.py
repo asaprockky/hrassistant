@@ -1,12 +1,15 @@
+import datetime
 import uuid
 
-from fastapi import HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from database.database import get_db
 from database.models import Practice, Question, TestSession, UserAnswer
 from routers.login import get_current_user
 from schemas.user_schema import TestStatusResponse
+from sqlalchemy.orm import Session
+from schemas.user_schema import AnswerCreate
 
-
+router = APIRouter()
 @router.post("/testing/start-test/{practice_id}")
 def start_test(
     practice_id: uuid.UUID, 
