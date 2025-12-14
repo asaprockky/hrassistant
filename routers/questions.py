@@ -1,160 +1,189 @@
-import random
-from fastapi import APIRouter
-from sqlalchemy import func
-from database.database import SessionLocal, get_db
-from database.models import Question, User, UserAnswer, StartedTest
-from schemas.user_schema import AnswerCreate, AnswerResponse
+import uuid
+
+from fastapi import HTTPException
+from database.database import get_db
+from database.models import Practice, Question, TestSession, UserAnswer
 from routers.login import get_current_user
-from sqlalchemy.orm import Session
-from fastapi import Depends, HTTPException
-from fastapi.security import OAuth2PasswordBearer
-
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="login")
-
-def get_question_by_level(db: Session, level: int):
-    question = db.query(Question)\
-                 .filter(Question.difficulty_level == level)\
-                 .order_by(func.random())\
-                 .first()
-    return question
+from schemas.user_schema import TestStatusResponse
 
 
-
-def get_difficulty_label(difficulty):
-    if difficulty <= 3: return 'easy'
-    elif difficulty <= 6: return 'medium'
-    else : return 'hard'
-
-user_state = {"level": 1, "score": 0.0}
-
-
-router = APIRouter()
-
-@router.post("/submit_answer", response_model=AnswerResponse)
-def submit_answer(
-    answer: AnswerCreate, 
-    user: User = Depends(get_current_user), 
-    db: Session = Depends(get_db)
+@router.post("/testing/start-test/{practice_id}")
+def start_test(
+    practice_id: uuid.UUID, 
+    db: Session = Depends(get_db), 
+    user_id: uuid.UUID = Depends(get_current_user)
 ):
-    # 1. Retrieve the user's current test state
-    test_session = db.query(StartedTest).filter(
-        StartedTest.user_id == user.id, 
-        StartedTest.is_active == True
+    # 1. Validate Practice
+    practice = db.query(Practice).filter(Practice.practice_id == practice_id).first()
+    if not practice or not practice.is_valid:
+        raise HTTPException(status_code=404, detail="Practice not found or inactive")
+    
+    if practice.deadline < datetime.utcnow():
+        raise HTTPException(status_code=400, detail="Practice deadline has passed")
+
+    # 2. Check if an active session already exists for this user/practice
+    existing_session = db.query(TestSession).filter(
+        TestSession.user_id == user_id,
+        TestSession.practice_id == practice_id,
+        TestSession.is_finished == False
     ).first()
 
-    if not test_session:
-        raise HTTPException(status_code=400, detail="Start a test first")
+    if existing_session:
+        return {"message": "Resuming existing test session", "session_id": existing_session.session_id}
 
-    # 2. Get the actual question to verify correctness (don't trust the client completely)
-    db_question = db.query(Question).filter(Question.id == answer.question_id).first()
-    if not db_question:
+    # 3. Create new session in DB
+    new_session = TestSession(
+        practice_id=practice_id,
+        user_id=user_id,
+        overall_points=0,
+        is_finished=False
+    )
+    db.add(new_session)
+    db.commit()
+    db.refresh(new_session)
+
+    return {"message": "Test Started", "session_id": new_session.session_id}
+
+
+@router.get("/testing/get-question/{practice_id}")
+def get_next_question(
+    practice_id: uuid.UUID, 
+    db: Session = Depends(get_db), 
+    user_id: uuid.UUID = Depends(get_current_user)
+):
+    # 1. Get the active session
+    session = db.query(TestSession).filter(
+        TestSession.user_id == user_id,
+        TestSession.practice_id == practice_id,
+        TestSession.is_finished == False
+    ).first()
+
+    if not session:
+        raise HTTPException(status_code=404, detail="No active test session found. Please start the test first.")
+
+    # 2. Get Practice details to know which questions are allowed
+    practice = db.query(Practice).filter(Practice.practice_id == practice_id).first()
+    
+    # 3. Get IDs of questions already answered in this session
+    answered_ids = [ans.question_id for ans in session.answers]
+
+    # 4. Find the first question in the Practice list that hasn't been answered
+    # Note: This logic assumes Practice.question_ids is the master list of questions for the test
+    next_question_id = None
+    for q_id in practice.question_ids:
+        if q_id not in answered_ids:
+            next_question_id = q_id
+            break
+    
+    if not next_question_id:
+        # If no questions left, mark session as finished
+        session.is_finished = True
+        db.commit()
+        return {"message": "Test Finished", "is_finished": True}
+
+    # 5. Fetch the actual question object
+    question = db.query(Question).filter(Question.id == next_question_id).first()
+    
+    if not question:
+        raise HTTPException(status_code=500, detail="Question data invalid")
+
+    # Return question (hide correct_answer obviously)
+    return {
+        "id": question.id,
+        "text": question.text,
+        "options": question.options,
+        "category": question.category,
+        "points": question.points
+    }
+
+
+@router.post("/testing/submit-answer/{practice_id}", response_model=TestStatusResponse)
+def submit_answer(
+    practice_id: uuid.UUID,
+    answer_data: AnswerCreate,
+    db: Session = Depends(get_db),
+    user_id: uuid.UUID = Depends(get_current_user)
+):
+    # 1. Retrieve Session
+    session = db.query(TestSession).filter(
+        TestSession.user_id == user_id,
+        TestSession.practice_id == practice_id,
+        TestSession.is_finished == False
+    ).first()
+
+    if not session:
+        raise HTTPException(status_code=404, detail="Active session not found")
+
+    # 2. Validate Question
+    question = db.query(Question).filter(Question.id == answer_data.question_id).first()
+    if not question:
         raise HTTPException(status_code=404, detail="Question not found")
 
-    # 3. Determine correctness (Logic can be here or passed from frontend if trusted)
-    # Assuming frontend sends `correct` boolean, but safer to check against db_question.correct_answer here
-    is_correct = answer.correct 
-
-    # 4. Calculate Logic
-    if is_correct:
-        test_session.current_level = min(9, test_session.current_level + 1)
-        points = round(1 + test_session.current_level / 10, 1)
-    else:
-        test_session.current_level = max(1, test_session.current_level - 1)
-        points = 0.0
-
-    test_session.current_score += points
-
-    # 5. Save Answer
-    new_answer = UserAnswer(
-        answer_text=answer.answer_text,
-        user_id=user.id,           # Fixed: was candidate_id
-        question_id=answer.question_id,
-        is_correct=is_correct,
-        score_awarded=points
-    )
-    
-    db.add(new_answer)
-    db.commit() # Commits both the new answer AND the updated test_session state
-    db.refresh(test_session)
-
-    # 6. Prepare next question data
-    q = get_question_by_level(db, test_session.current_level)
-    difficulty = get_difficulty_label(test_session.current_level)
-
-    return AnswerResponse(
-        question_id=q.id if q else None,
-        answer_text=new_answer.answer_text,
-        points_awarded=points,
-        total_score=round(test_session.current_score, 2),
-        level=test_session.current_level,
-        difficulty=difficulty
-    )
-
-@router.get("/get_question")
-def get_question():
-    level = user_state["level"]
-    difficulty = get_difficulty_label(level)
-    q = get_question_by_level(level)
-    return {
-        "question": q.text,
-        "options": q.options,
-        "difficulty": difficulty,
-        "level": level,
-        "indicator": f"Current Level: {level}/9"
-    }
-
-@router.get("/start_test")
-def start_test(
-    db: Session = Depends(get_db), 
-    user: User = Depends(get_current_user)
-):
-    # Check if an active test already exists
-    active_test = db.query(StartedTest).filter(
-        StartedTest.user_id == user.id, 
-        StartedTest.is_active == True
+    # 3. Check Duplicate Answer
+    existing_answer = db.query(UserAnswer).filter(
+        UserAnswer.session_id == session.session_id,
+        UserAnswer.question_id == answer_data.question_id
     ).first()
-
-    if not active_test:
-        # Create a new test session in DB
-        active_test = StartedTest(user_id=user.id, current_level=1, current_score=0.0)
-        db.add(active_test)
-        db.commit()
-        db.refresh(active_test)
-
-    # Fetch a question based on the stored level
-    q = get_question_by_level(db, active_test.current_level)
     
-    if not q:
-        raise HTTPException(status_code=404, detail="No questions found for this level")
+    if existing_answer:
+        raise HTTPException(status_code=400, detail="Question already answered")
+
+    # 4. Check Logic
+    is_correct = question.correct_answer.strip().lower() == answer_data.user_answer.strip().lower()
+    points_awarded = question.points if is_correct else 0.0
+
+    # 5. Save User Answer
+    user_answer_entry = UserAnswer(
+        session_id=session.session_id,
+        question_id=question.id,
+        user_answer=answer_data.user_answer,
+        is_correct=is_correct,
+        points_awarded=points_awarded
+    )
+    db.add(user_answer_entry)
+    
+    # 6. Update Session Score
+    session.overall_points += points_awarded
+    db.commit()
+
+    # 7. Check if Test is Finished
+    # Compare count of answered questions vs total questions in practice
+    practice = db.query(Practice).filter(Practice.practice_id == practice_id).first()
+    total_questions = len(practice.question_ids)
+    answered_count = db.query(UserAnswer).filter(UserAnswer.session_id == session.session_id).count()
+    
+    is_finished = answered_count >= total_questions
+    
+    if is_finished:
+        session.is_finished = True
+        db.commit()
 
     return {
-        "question": q.text,
-        "question_id": q.id,
-        "options": q.options,
-        "difficulty": get_difficulty_label(active_test.current_level),
-        "level": active_test.current_level,
-        "indicator": f"Current Level: {active_test.current_level}/9"
+        "message": "Answer submitted",
+        "is_correct": is_correct,
+        "correct_answer": question.correct_answer, # Optional: return this only if you want immediate feedback
+        "points_awarded": points_awarded,
+        "is_test_finished": is_finished
     }
 
-
-@router.post("/finish_test")
-def finish_test(
+@router.get("/testing/result/{practice_id}")
+def get_test_result(
+    practice_id: uuid.UUID,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user)):
-    test_session = db.query(StartedTest)
-    if not test_session:
-        raise HTTPException(status_code= 400, detail= "No active test to finish")
-    test_session.is_active = False
+    user_id: uuid.UUID = Depends(get_current_user)
+):
+    # Retrieve the finished session
+    session = db.query(TestSession).filter(
+        TestSession.user_id == user_id,
+        TestSession.practice_id == practice_id
+    ).order_by(TestSession.started_time.desc()).first()
 
-    total_questions = db.query(UserAnswer).filter(
-        UserAnswer.user_id == user.id,
-        UserAnswer.answered_at >= test_session.created_at # rudimentary check
-    ).count()
+    if not session:
+        raise HTTPException(status_code=404, detail="No session found")
 
-    db.commit()
     return {
-        "message": "Test completed successfully",
-        "final_score": test_session.current_score,
-        "final_level": test_session.current_level,
-        "total_questions_answered": total_questions
+        "practice_id": practice_id,
+        "total_score": session.overall_points,
+        "is_finished": session.is_finished,
+        "started_at": session.started_time
     }

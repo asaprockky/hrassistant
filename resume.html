@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TCP/IP RDP Support Cheat Sheet</title>
+    <style>
+        :root {
+            --bg-color: #1e1e2e;
+            --card-bg: #2a2a3c;
+            --text-main: #e0e0e0;
+            --text-muted: #a0a0a0;
+            --accent: #4cc9f0;
+            --highlight: #f72585;
+            --border-radius: 8px;
+            --font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        body {
+            font-family: var(--font-family);
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        h1 {
+            color: var(--accent);
+            margin-bottom: 10px;
+        }
+
+        /* Search & Filter Section */
+        .controls {
+            width: 100%;
+            max-width: 800px;
+            margin-bottom: 30px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        input[type="text"] {
+            width: 100%;
+            padding: 15px;
+            border-radius: var(--border-radius);
+            border: 2px solid #3a3a4e;
+            background-color: var(--card-bg);
+            color: white;
+            font-size: 16px;
+            outline: none;
+            transition: border-color 0.3s;
+        }
+
+        input[type="text"]:focus {
+            border-color: var(--accent);
+        }
+
+        .filter-btns {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .filter-btn {
+            padding: 8px 16px;
+            background-color: #3a3a4e;
+            border: none;
+            border-radius: 20px;
+            color: white;
+            cursor: pointer;
+            transition: background 0.2s;
+            font-size: 14px;
+        }
+
+        .filter-btn:hover, .filter-btn.active {
+            background-color: var(--accent);
+            color: #000;
+        }
+
+        /* Grid Layout */
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+            gap: 20px;
+            width: 100%;
+            max-width: 1200px;
+        }
+
+        /* Card Styling */
+        .card {
+            background-color: var(--card-bg);
+            border-radius: var(--border-radius);
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            border-left: 4px solid var(--accent);
+            transition: transform 0.2s;
+        }
+
+        .card:hover {
+            transform: translateY(-2px);
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .category {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            background: rgba(76, 201, 240, 0.1);
+            color: var(--accent);
+            padding: 4px 8px;
+            border-radius: 4px;
+        }
+
+        code {
+            display: block;
+            background-color: #111;
+            padding: 12px;
+            border-radius: 4px;
+            color: #4cd964;
+            font-family: 'Consolas', 'Courier New', monospace;
+            cursor: pointer;
+            position: relative;
+            margin-bottom: 15px;
+            border: 1px solid #333;
+        }
+
+        code:hover {
+            border-color: #666;
+        }
+
+        code::after {
+            content: "Click to Copy";
+            position: absolute;
+            right: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 10px;
+            color: #888;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        code:hover::after {
+            opacity: 1;
+        }
+
+        .desc-box {
+            margin-bottom: 10px;
+        }
+
+        .lang-label {
+            font-weight: bold;
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-right: 5px;
+        }
+
+        .use-case {
+            margin-top: 15px;
+            padding-top: 10px;
+            border-top: 1px solid #3a3a4e;
+            font-size: 14px;
+            color: #ffd166;
+        }
+        
+        .hidden {
+            display: none;
+        }
+
+        /* Toast Notification */
+        #toast {
+            visibility: hidden;
+            min-width: 250px;
+            background-color: #333;
+            color: #fff;
+            text-align: center;
+            border-radius: 2px;
+            padding: 16px;
+            position: fixed;
+            z-index: 1;
+            bottom: 30px;
+            font-size: 17px;
+        }
+
+        #toast.show {
+            visibility: visible;
+            animation: fadein 0.5s, fadeout 0.5s 2.5s;
+        }
+
+        @keyframes fadein {
+            from {bottom: 0; opacity: 0;}
+            to {bottom: 30px; opacity: 1;}
+        }
+
+        @keyframes fadeout {
+            from {bottom: 30px; opacity: 1;}
+            to {bottom: 0; opacity: 0;}
+        }
+    </style>
+</head>
+<body>
+
+    <h1>🖥️ NetOps Support Cheat Sheet</h1>
+    
+    <div class="controls">
+        <input type="text" id="searchInput" placeholder="Search commands, problems, or Russian terms (e.g., 'ping', 'dns', 'порт')...">
+        
+        <div class="filter-btns">
+            <button class="filter-btn active" onclick="filterSelection('all')">All</button>
+            <button class="filter-btn" onclick="filterSelection('rdp')">RDP Specific</button>
+            <button class="filter-btn" onclick="filterSelection('dns')">DNS / IP</button>
+            <button class="filter-btn" onclick="filterSelection('diag')">Diagnostics</button>
+            <button class="filter-btn" onclick="filterSelection('reset')">Reset / Fix</button>
+        </div>
+    </div>
+
+    <div class="grid" id="cardGrid">
+        </div>
+
+    <div id="toast">Copied to clipboard!</div>
+
+    <script>
+        // Data Source
+        const tools = [
+            {
+                cmd: "ping -t <IP_ADDRESS>",
+                category: "diag",
+                en: "Continuous ping. Checks for packet loss or jitter.",
+                ru: "Непрерывный пинг. Проверка потери пакетов или скачков задержки.",
+                use_en: "Use when RDP freezes or disconnects frequently.",
+                use_ru: "Использовать, когда RDP зависает или часто отключается."
+            },
+            {
+                cmd: "Test-NetConnection -ComputerName <IP> -Port 3389",
+                category: "rdp",
+                en: "PowerShell command to check if RDP port is open.",
+                ru: "Команда PowerShell для проверки открыт ли порт RDP.",
+                use_en: "Use if 'ping' works but RDP connection fails.",
+                use_ru: "Использовать, если 'ping' проходит, но RDP не подключается."
+            },
+            {
+                cmd: "netstat -ano | find \"3389\"",
+                category: "rdp",
+                en: "Check if the server is actually listening on the RDP port.",
+                ru: "Проверка, слушает ли сервер порт RDP.",
+                use_en: "Run on the SERVER when users cannot connect.",
+                use_ru: "Запускать НА СЕРВЕРЕ, когда пользователи не могут подключиться."
+            },
+            {
+                cmd: "ipconfig /flushdns",
+                category: "dns",
+                en: "Clears the local DNS cache.",
+                ru: "Очищает локальный кэш DNS.",
+                use_en: "Use if you updated a server IP but can't connect by hostname.",
+                use_ru: "Использовать, если IP сервера сменился, но по имени не подключается."
+            },
+            {
+                cmd: "tracert <IP_ADDRESS>",
+                category: "diag",
+                en: "Trace route. Shows every router (hop) between you and server.",
+                ru: "Трассировка маршрута. Показывает каждый роутер на пути к серверу.",
+                use_en: "Use to find WHERE the connection is breaking (ISP or Local).",
+                use_ru: "Позволяет найти, ГДЕ именно обрывается связь (Провайдер или Локалка)."
+            },
+            {
+                cmd: "nslookup <HOSTNAME>",
+                category: "dns",
+                en: "Queries DNS to find the IP address of a hostname.",
+                ru: "Запрашивает DNS для поиска IP-адреса по имени хоста.",
+                use_en: "Use to verify domain name resolution.",
+                use_ru: "Использовать для проверки разрешения доменного имени."
+            },
+            {
+                cmd: "netsh winsock reset",
+                category: "reset",
+                en: "Resets the Winsock catalog (Network API). Requires Reboot.",
+                ru: "Сброс каталога Winsock. Требует перезагрузки.",
+                use_en: "Use as a last resort for weird network errors.",
+                use_ru: "Последнее средство при странных сетевых ошибках."
+            },
+            {
+                cmd: "whoami /user",
+                category: "rdp",
+                en: "Shows current user and SID.",
+                ru: "Показывает текущего пользователя и SID.",
+                use_en: "Useful for permission issues on RDP.",
+                use_ru: "Полезно при проблемах с правами доступа на RDP."
+            },
+            {
+                cmd: "mstsc /v:<IP_ADDRESS> /f",
+                category: "rdp",
+                en: "Command line to launch RDP in full screen immediately.",
+                ru: "Командная строка для запуска RDP сразу в полноэкранном режиме.",
+                use_en: "Quick way to launch connection without GUI.",
+                use_ru: "Быстрый способ запустить подключение без GUI."
+            },
+            {
+                cmd: "arp -a",
+                category: "diag",
+                en: "Displays the ARP table (IP to MAC mapping).",
+                ru: "Показывает таблицу ARP (соответствие IP и MAC).",
+                use_en: "Check for IP conflicts on the local network.",
+                use_ru: "Проверка конфликтов IP в локальной сети."
+            }
+        ];
+
+        const grid = document.getElementById('cardGrid');
+        const searchInput = document.getElementById('searchInput');
+
+        // Function to render cards
+        function renderCards(filter = 'all') {
+            grid.innerHTML = '';
+            tools.forEach(tool => {
+                if (filter !== 'all' && tool.category !== filter) return;
+
+                const card = document.createElement('div');
+                card.className = 'card';
+                card.setAttribute('data-search', `${tool.cmd} ${tool.en} ${tool.ru} ${tool.use_en} ${tool.use_ru}`.toLowerCase());
+                
+                card.innerHTML = `
+                    <div class="card-header">
+                        <span class="category">${tool.category.toUpperCase()}</span>
+                    </div>
+                    <code onclick="copyToClipboard('${tool.cmd.replace(/'/g, "\\'")}')">${tool.cmd}</code>
+                    <div class="desc-box">
+                        <span class="lang-label">EN:</span> ${tool.en}
+                    </div>
+                    <div class="desc-box">
+                        <span class="lang-label">RU:</span> ${tool.ru}
+                    </div>
+                    <div class="use-case">
+                        <strong>💡 Case:</strong> ${tool.use_en}<br>
+                        <em>${tool.use_ru}</em>
+                    </div>
+                `;
+                grid.appendChild(card);
+            });
+        }
+
+        // Search Functionality
+        searchInput.addEventListener('input', (e) => {
+            const term = e.target.value.toLowerCase();
+            const cards = document.querySelectorAll('.card');
+            
+            cards.forEach(card => {
+                const content = card.getAttribute('data-search');
+                if (content.includes(term)) {
+                    card.classList.remove('hidden');
+                } else {
+                    card.classList.add('hidden');
+                }
+            });
+        });
+
+        // Filter Buttons Logic
+        function filterSelection(category) {
+            // Update active button state
+            const buttons = document.getElementsByClassName("filter-btn");
+            for (let i = 0; i < buttons.length; i++) {
+                buttons[i].classList.remove("active");
+                if (buttons[i].textContent.toLowerCase().includes(category === 'diag' ? 'diagnostics' : category) || 
+                   (category === 'all' && buttons[i].textContent === 'All')) {
+                    buttons[i].classList.add("active");
+                }
+            }
+            renderCards(category);
+            // Re-apply search if text exists
+            if (searchInput.value) {
+                searchInput.dispatchEvent(new Event('input'));
+            }
+        }
+
+        // Clipboard Copy
+        function copyToClipboard(text) {
+            navigator.clipboard.writeText(text).then(() => {
+                const toast = document.getElementById("toast");
+                toast.className = "show";
+                setTimeout(() => { toast.className = toast.className.replace("show", ""); }, 3000);
+            });
+        }
+
+        // Initial Render
+        renderCards();
+
+    </script>
+</body>
+</html>

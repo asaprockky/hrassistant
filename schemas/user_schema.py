@@ -71,32 +71,13 @@ class VacancyResponse(BaseModel):
     class Config:
         orm_mode = True  # allows SQLAlchemy models to be converted to JSON
 
-
 class AnswerCreate(BaseModel):
-    """
-    Schema for the data sent by the user to submit an answer.
-    All fields are REQUIRED (indicated by '...').
-    """
-    question_id: int = Field(
-        ..., 
-        description="The ID of the question being answered."
-    )
-    answer: str = Field(
-        ..., 
-        description="The user's submitted answer text/value."
-    )
-    correct: bool = Field(
-        ..., 
-        description="Indicates if the user's answer was correct (True) or incorrect (False)."
-    )
-# schema for returning answer info
-class AnswerResponse(BaseModel):
-    question_id: int
-    answer_text: str
-    points_awarded: float
-    total_score: float
-    level: int
-    difficulty: str
+    question_id: uuid.UUID
+    user_answer: str
 
-    class Config:
-        orm_mode = True
+class TestStatusResponse(BaseModel):
+    message: str
+    is_correct: bool
+    correct_answer: Optional[str] = None
+    points_awarded: float
+    is_test_finished: bool

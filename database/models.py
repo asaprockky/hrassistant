@@ -1,9 +1,8 @@
-# models.py
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from sqlalchemy import JSON, Column, Date, Integer, String, ForeignKey, Boolean, Text, Float, DateTime, Enum as SAEnum
 from sqlalchemy.orm import relationship
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID, ARRAY, JSON
 from sqlalchemy.sql import func
 
 # Ensure these imports match your project structure
@@ -23,7 +22,10 @@ class Company(Base):
     # Relationships
     users = relationship("User", back_populates="company")
     created_vacancies = relationship("Created_Vacancy", back_populates="company")
-    assigned_tests = relationship("StartedTest", back_populates="owner_company")
+    
+    # FIX: The model 'StartedTest' does not exist. 
+    # Removed the incorrect relationship definition here.
+    # assigned_tests = relationship("StartedTest", back_populates="owner_company")
 
 # --- User Model ---
 class User(Base):
@@ -34,7 +36,6 @@ class User(Base):
     role = Column(SAEnum(Role), default=Role.USER, nullable=False)
     password = Column(String(100), nullable=False)
     
-    # FIXED: Type must match Company.id (UUID)
     company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=True)
     company = relationship("Company", back_populates="users")
 
@@ -45,9 +46,11 @@ class User(Base):
     email = Column(String(30), nullable=True)
 
     # Relationships
-    started_tests = relationship("StartedTest", back_populates="user")
-    user_answers = relationship("UserAnswer", back_populates="user")
-
+    # FIX: Changed relationship target from StartedTest (old model) to TestSession (new model)
+    test_sessions = relationship("TestSession", back_populates="user")
+    
+    # Removed the redundant or incorrect user_answers relationship here, 
+    # as the answers are linked via TestSession.
 
 # --- Created_Vacancy Model ---
 class Created_Vacancy(Base):
@@ -62,7 +65,6 @@ class Created_Vacancy(Base):
     candidate_count = Column(Integer, default=0)
     is_available = Column(Boolean, default=True)
 
-    # FIXED: Type must match Company.id (UUID)
     company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"))
     company = relationship("Company", back_populates="created_vacancies")
 
@@ -81,57 +83,62 @@ class Candidate(Base):
     experience = Column(String(255))
     skills = Column(String(255))
 
-    # FIXED: Type must match Created_Vacancy.id (UUID)
     vacancy_id = Column(UUID(as_uuid=True), ForeignKey("created_vacancies.id"))
     vacancy = relationship("Created_Vacancy", back_populates="candidates")
+
+
+#### TESTING PART
 
 # --- Question Model ---
 class Question(Base):
     __tablename__ = "user_questions"
-
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     text = Column(String, nullable=False)
     difficulty_level = Column(Integer, nullable=False)
     correct_answer = Column(String, nullable=False)
-    options = Column(JSON)
+    options = Column(JSON, nullable=False)
     category = Column(String(50))
-    points = Column(Float)
+    points = Column(Float, default=1.0)
 
-    user_answers = relationship("UserAnswer", back_populates="question")
+class Practice(Base):
+    __tablename__ = "practice"
+    practice_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    title = Column(String, nullable=False)
+    question_ids = Column(ARRAY(UUID(as_uuid=True)), nullable=False) 
+    tags = Column(ARRAY(String), nullable=False)
+    user_emails = Column(ARRAY(String), nullable=False)
+    deadline = Column(DateTime, nullable=False, default=lambda: datetime.utcnow() + timedelta(days=2))
+    is_valid = Column(Boolean, default=True)
+    
+    # Relationship to TestSession (Optional, for completeness)
+    test_sessions = relationship("TestSession", back_populates="practice")
 
-# --- UserAnswer Model ---
+
+class TestSession(Base):
+    __tablename__ = "test_session"
+    session_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    
+    practice_id = Column(UUID(as_uuid=True), ForeignKey("practice.practice_id"), nullable=False)
+    practice = relationship("Practice", back_populates="test_sessions") # Added relationship to Practice
+    
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    user = relationship("User", back_populates="test_sessions") # Added relationship to User
+    
+    overall_points = Column(Float, default=0.0)
+    is_finished = Column(Boolean, default=False)
+    started_time = Column(DateTime, default=datetime.utcnow)
+    
+    # Relationship to track individual answers
+    answers = relationship("UserAnswer", back_populates="session")
+
 class UserAnswer(Base):
     __tablename__ = "user_answers"
-
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_answer = Column(String, nullable=False)
-    is_correct = Column(Boolean, nullable=False)
-    score_awarded = Column(Float, default=0.0)
     
-    # FIXED: Types must match User.id and Question.id (UUID)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"))
+    session_id = Column(UUID(as_uuid=True), ForeignKey("test_session.session_id"))
+    session = relationship("TestSession", back_populates="answers") # Relationship to TestSession
+
     question_id = Column(UUID(as_uuid=True), ForeignKey("user_questions.id"))
-    
-    answered_at = Column(DateTime, default=func.now())
-
-    user = relationship("User", back_populates="user_answers")
-    question = relationship("Question", back_populates="user_answers")
-
-# --- Started Test Model ---
-class StartedTest(Base):
-    __tablename__ = "started_test"
-
-    test_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    
-    # FIXED: Types must match User.id and Company.id (UUID)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id")) 
-    owner = Column(UUID(as_uuid=True), ForeignKey("companies.id"))
-    
-    deadline = Column(DateTime, nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    current_level = Column(Integer, default=1)
-    current_score = Column(Float, default=0.0)
-    is_active = Column(Boolean, default=True)
-
-    user = relationship("User", back_populates="started_tests")
-    owner_company = relationship("Company")
+    user_answer = Column(String)
+    is_correct = Column(Boolean)
+    points_awarded = Column(Float)

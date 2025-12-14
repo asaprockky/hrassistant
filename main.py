@@ -29,6 +29,7 @@ app.add_middleware(
     allow_methods=["*"],            # Allow all HTTP methods
     allow_headers=["*"],            # Allow all headers
 )
+
 def get_data():
     db = SessionLocal()
     try:
