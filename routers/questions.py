@@ -1,30 +1,37 @@
 import datetime
 import uuid
+from datetime import timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+from sqlalchemy import func
+
+# Adjust these imports to match your project structure
 from database.database import get_db
 from database.models import Practice, Question, TestSession, UserAnswer
 from routers.login import get_current_user
-from schemas.user_schema import TestStatusResponse
-from sqlalchemy.orm import Session
-from schemas.user_schema import AnswerCreate
+from schemas.user_schema import TestStatusResponse, AnswerCreate
 
 router = APIRouter()
+
 @router.post("/testing/start-test/{practice_id}")
 def start_test(
     practice_id: uuid.UUID, 
     db: Session = Depends(get_db), 
-    user_id: uuid.UUID = Depends(get_current_user)
+    current_user = Depends(get_current_user)
 ):
+    user_id = current_user.id
+    
     # 1. Validate Practice
     practice = db.query(Practice).filter(Practice.practice_id == practice_id).first()
     if not practice or not practice.is_valid:
         raise HTTPException(status_code=404, detail="Practice not found or inactive")
     
-    if practice.deadline < datetime.utcnow():
+    # Use timezone-aware comparison
+    if practice.deadline < datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None):
         raise HTTPException(status_code=400, detail="Practice deadline has passed")
 
-    # 2. Check if an active session already exists for this user/practice
+    # 2. Check for existing active session
     existing_session = db.query(TestSession).filter(
         TestSession.user_id == user_id,
         TestSession.practice_id == practice_id,
@@ -48,35 +55,41 @@ def start_test(
     return {"message": "Test Started", "session_id": new_session.session_id}
 
 
-@router.get("/testing/get-question/{practice_id}")
+@router.get("/testing/get-question/{session_id}")
 def get_next_question(
-    practice_id: uuid.UUID, 
+    session_id: uuid.UUID, 
     db: Session = Depends(get_db), 
-    user_id: uuid.UUID = Depends(get_current_user)
+    current_user = Depends(get_current_user)
 ):
+    user_id = current_user.id
+    
     # 1. Get the active session
     session = db.query(TestSession).filter(
         TestSession.user_id == user_id,
-        TestSession.practice_id == practice_id,
+        TestSession.session_id == session_id,
         TestSession.is_finished == False
     ).first()
 
     if not session:
-        raise HTTPException(status_code=404, detail="No active test session found. Please start the test first.")
+        raise HTTPException(status_code=404, detail="No active test session found.")
 
-    # 2. Get Practice details to know which questions are allowed
-    practice = db.query(Practice).filter(Practice.practice_id == practice_id).first()
+    # 2. Get Practice details using the PRACTICE_ID stored in the session
+    # BUG FIX: You previously used 'session_id' here, which was wrong.
+    practice = db.query(Practice).filter(Practice.practice_id == session.practice_id).first()
     
+    if not practice:
+        raise HTTPException(status_code=404, detail="Practice data not found")
+
     # 3. Get IDs of questions already answered in this session
     answered_ids = [ans.question_id for ans in session.answers]
 
     # 4. Find the first question in the Practice list that hasn't been answered
-    # Note: This logic assumes Practice.question_ids is the master list of questions for the test
     next_question_id = None
-    for q_id in practice.question_ids:
-        if q_id not in answered_ids:
-            next_question_id = q_id
-            break
+    if practice.question_ids:
+        for q_id in practice.question_ids:
+            if q_id not in answered_ids:
+                next_question_id = q_id
+                break
     
     if not next_question_id:
         # If no questions left, mark session as finished
@@ -90,7 +103,6 @@ def get_next_question(
     if not question:
         raise HTTPException(status_code=500, detail="Question data invalid")
 
-    # Return question (hide correct_answer obviously)
     return {
         "id": question.id,
         "text": question.text,
@@ -100,17 +112,19 @@ def get_next_question(
     }
 
 
-@router.post("/testing/submit-answer/{practice_id}", response_model=TestStatusResponse)
+@router.post("/testing/submit-answer/{session_id}", response_model=TestStatusResponse)
 def submit_answer(
-    practice_id: uuid.UUID,
+    session_id: uuid.UUID,
     answer_data: AnswerCreate,
     db: Session = Depends(get_db),
-    user_id: uuid.UUID = Depends(get_current_user)
+    current_user = Depends(get_current_user) # BUG FIX: Removed type hint causing cast error
 ):
+    user_id = current_user.id # BUG FIX: Extract ID manually
+
     # 1. Retrieve Session
     session = db.query(TestSession).filter(
         TestSession.user_id == user_id,
-        TestSession.practice_id == practice_id,
+        TestSession.session_id == session_id,
         TestSession.is_finished == False
     ).first()
 
@@ -148,23 +162,27 @@ def submit_answer(
     # 6. Update Session Score
     session.overall_points += points_awarded
     db.commit()
-
+    practice_id = session.practice_id
     # 7. Check if Test is Finished
-    # Compare count of answered questions vs total questions in practice
     practice = db.query(Practice).filter(Practice.practice_id == practice_id).first()
-    total_questions = len(practice.question_ids)
-    answered_count = db.query(UserAnswer).filter(UserAnswer.session_id == session.session_id).count()
     
-    is_finished = answered_count >= total_questions
-    
-    if is_finished:
-        session.is_finished = True
-        db.commit()
+    # Ensure practice and question_ids exist
+    if practice and practice.question_ids:
+        total_questions = len(practice.question_ids)
+        answered_count = db.query(UserAnswer).filter(UserAnswer.session_id == session.session_id).count()
+        
+        is_finished = answered_count >= total_questions
+        
+        if is_finished:
+            session.is_finished = True
+            db.commit()
+    else:
+        is_finished = False
 
     return {
         "message": "Answer submitted",
         "is_correct": is_correct,
-        "correct_answer": question.correct_answer, # Optional: return this only if you want immediate feedback
+        "correct_answer": question.correct_answer,
         "points_awarded": points_awarded,
         "is_test_finished": is_finished
     }
@@ -173,8 +191,10 @@ def submit_answer(
 def get_test_result(
     practice_id: uuid.UUID,
     db: Session = Depends(get_db),
-    user_id: uuid.UUID = Depends(get_current_user)
+    current_user = Depends(get_current_user) # BUG FIX: Removed type hint causing cast error
 ):
+    user_id = current_user.id # BUG FIX: Extract ID manually
+
     # Retrieve the finished session
     session = db.query(TestSession).filter(
         TestSession.user_id == user_id,
