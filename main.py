@@ -1,33 +1,29 @@
-from fastapi import Depends, FastAPI, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi import FastAPI, Depends
 from sqlalchemy.orm import Session
-from database.database import SessionLocal, engine
+from database.database import SessionLocal
 from database.models import User
 from routers import email, login, main_page, questions, tester_main, user_profile
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
-app.include_router(login.router, prefix= "", tags= ["authentication"])
-app.include_router(main_page.router, prefix= "", tags= ["create_job"])
-app.include_router(email.router, prefix= "", tags= ["email"])
-app.include_router(main_page.router, prefix= "", tags= ["vacancies"])
-app.include_router(tester_main.router, prefix= "", tags= ["my-tests"])
-app.include_router(questions.router, prefix= "", tags= ["tests"])
-app.include_router(user_profile.router, prefix= "", tags= ["user-profile"])
+app.include_router(login.router)
+app.include_router(main_page.router)
+app.include_router(email.router)
+app.include_router(tester_main.router)
+app.include_router(questions.router)
+app.include_router(user_profile.router)
 
-origins = [
-    "http://localhost:3000",   # frontend dev URL
-    "https://localhost:5173",  # production URL
-    "http://localhost:5173",  
-    "https://hr-assistant-j2u1.vercel.app"
-]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,          # List of allowed origins
-    allow_credentials=True,         # Allow cookies, authorization headers
-    allow_methods=["*"],            # Allow all HTTP methods
-    allow_headers=["*"],            # Allow all headers
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "https://hr-assistant-j2u1.vercel.app"
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 def get_data():
@@ -38,12 +34,9 @@ def get_data():
         db.close()
 
 @app.get("/users")
-async def test(db: Session = Depends(get_data)):
-    users = db.query(User).all()
-    return users
-
+def users(db: Session = Depends(get_data)):
+    return db.query(User).all()
 
 @app.get("/ping")
-async def ping():
+def ping():
     return {"message": "pong"}
-
