@@ -1,10 +1,7 @@
-import os
 import sys
+import os
 
-# Ensure the app directory is in the python path
-sys.path.insert(0, os.getcwd())
+sys.path.insert(0, os.path.dirname(__file__))
 
-from a2wsgi import ASGIMiddleware
-from main import app  # This matches your 'main.py' and 'app = FastAPI()'
-
-application = ASGIMiddleware(app)
+from main import app
+application = app
