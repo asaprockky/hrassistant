@@ -104,7 +104,7 @@ async def login(
     access_token = create_access_token(
         data={"user_id": str(user.id), "username": user.username}
     )
-
+    user_role = user.role
     # set JWT cookie
     response.set_cookie(
         key="access_token",
@@ -115,7 +115,7 @@ async def login(
         max_age=604800,
     )
 
-    return {"access_token": access_token}
+    return {"access_token": access_token, "user_role" : user_role}
 
 
 

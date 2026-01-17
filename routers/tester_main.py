@@ -70,11 +70,11 @@ def get_test_history(db: Session = Depends(get_db), user: User = Depends(get_cur
     
     # 1. QUERY CORRECTION: Use TestSession instead of StartedTest
     all_sessions = db.query(TestSession).filter(
-        TestSession.user_id == user.id,
+        TestSession.user_id == user.id, TestSession.is_finished == True
     ).order_by(TestSession.started_time.desc()).all() # Use started_time for ordering
 
     if not all_sessions:
-        return {"message": "No tests have been assigned to this user."}
+        return {"message": "The user hasn't finished any test"}
 
     # 2. MAPPING CORRECTION: Map to the TestSession and related Practice model attributes
     history_summaries = []
@@ -82,13 +82,11 @@ def get_test_history(db: Session = Depends(get_db), user: User = Depends(get_cur
         company_name = get_company_name(db, session.user.company_id) if session.user.company_id else "Unassigned Test"
 
         history_summaries.append({
-            "test_id": session.session_id,
-            "test_title": session.practice.title, # Assuming practice relationship is correctly configured
-            "created_by": company_name, 
-            "created_at": session.started_time,
-            "deadline": session.practice.deadline,
-            "final_score": session.overall_points,
-            "status": "Completed" if session.is_finished else "Pending"
+            "test_id": str(session.session_id),
+            "assessment_name": session.practice.title,
+            "date": session.started_time.strftime("%b %d, %Y"),
+            "score": int(session.overall_points),
+            "status_label": f"Passed ({int(session.overall_points)}%)" if session.overall_points >= 60 else "Failed",
+            "action_url": f"/reports/{session.session_id}"
         })
-
     return history_summaries
