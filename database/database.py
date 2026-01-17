@@ -6,7 +6,9 @@ from sqlalchemy.orm import sessionmaker
 #DATABASE_URL = "sqlite:///./test.db"
 
 ## internal url
-DATABASE_URL = "postgresql://fulstek1_asap:14042005Fayz.@localhost/fulstek1_hr"
+# Updated with URL-encoded password
+DATABASE_URL = "postgresql://postgres.wzdcbbbqjaledjfraolq:14042005Fayz.%24@aws-1-ap-southeast-2.pooler.supabase.com:6543/postgres"
+#DATABASE_URL = "postgresql://fulstek1_asap:14042005Fayz.@167.235.222.200/fulstek1_hr"
 ## external url
 #DATABASE_URL = "postgresql://asap:pzzPoFUjWFYEfblTYFRW8P46AMC7P6Yr@dpg-d4lfcl3e5dus73foo3i0-a.oregon-postgres.render.com/hrassistant_2k4y"
 
