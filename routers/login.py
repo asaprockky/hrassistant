@@ -25,12 +25,15 @@ SECRET_KEY = "supersecretkey123"
 ALGORITHM = "HS256"
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/users/login")
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+def get_password_hash(password):
+    # Bcrypt fails if input is > 72 bytes, so we truncate
+    password = password.encode("utf-8")[:72]
+    return pwd_context.hash(password)
 
 def verify_password(plain_password, hashed_password):
-    return pwd_context.verify(plain_password,hashed_password)
-
-def get_password_hash(password):
-    return pwd_context.hash(password)
+    # Must match the hashing logic
+    plain_password = plain_password.encode("utf-8")[:72]
+    return pwd_context.verify(plain_password, hashed_password)
 
 def get_data():
     db = SessionLocal()
@@ -120,32 +123,42 @@ async def login(
 
 
 @router.post("/signup")
-def signup(user_data: UserCreate, response: Response,  db: Session = Depends(get_db)):
+def signup(user_data: UserCreate, response: Response, db: Session = Depends(get_db)):
     existing_user = db.query(User).filter(User.username == user_data.username).first()
     if existing_user:
         raise HTTPException(
-            status_code= status.HTTP_409_CONFLICT, 
-            detail = "Username Already Taken"
+            status_code=status.HTTP_409_CONFLICT, 
+            detail="Username Already Taken"
         )
+    
     hashed_pwd = get_password_hash(user_data.password)
+    
     new_user = User(
-        username = user_data.username,
-        role= user_data.role,
-        password = hashed_pwd
+        username=user_data.username,
+        role=user_data.role,
+        password=hashed_pwd,
+        # Map the new profile fields
+        name=user_data.name,
+        surname=user_data.surname,
+        age=user_data.age,
+        email=user_data.email
     )
+    
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
+    
     access_token = create_access_token(
         data={"user_id": str(new_user.id), "username": new_user.username}
     )
+    
     response.set_cookie(
-            key="access_token",
-            value=access_token,
-            httponly=True,   
-            secure=False,  
-            samesite="lax",
-            max_age=604800
-        )
+        key="access_token",
+        value=access_token,
+        httponly=True,   
+        secure=False,  
+        samesite="lax",
+        max_age=604800
+    )
+    
     return {"access_token": access_token}
-

@@ -46,8 +46,15 @@ class UserProfilePageOut(BaseModel):
 class UserCreate(BaseModel):
     username: str
     password: str
-    role : Role
+    role: Role
+    # Added required profile fields
+    name: str
+    surname: str
+    age: int
+    email: str | None = None
 
+
+    
 class EmailUpdate(BaseModel):
     email : str
 class UserResponse(BaseModel):
