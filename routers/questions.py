@@ -236,13 +236,13 @@ from fastapi import HTTPException
 
 @router.get("/testing/assigned/{filter_option}")
 def get_assigned_tests(
-    filter_option: str,  # Accepts: 'latest', 'all', '1', '2', etc.
+    filter_option: str, 
     db: Session = Depends(get_db), 
     current_user = Depends(get_current_user)
 ):
     now = datetime.utcnow()
     
-    # 1. Build the base query
+    # 1. Base Query: Join assignments and filter active/unfinished tests
     query = (
         db.query(Practice)
         .join(PracticeAssignment, Practice.practice_id == PracticeAssignment.practice_id)
@@ -262,27 +262,37 @@ def get_assigned_tests(
         .order_by(Practice.deadline.asc())
     )
 
-    # 2. Apply filtering logic based on the option
-    if filter_option == "latest":
-        # Returns a single object (or custom message if empty)
-        latest_practice = query.first()
-        if not latest_practice:
-            return {"message": "No pending tests found", "practice_id": None}
-            
+    # 2. Helper function to format the output into your "Assessment" interface
+    def format_assessment(p: Practice):
+        # Determine status based on if a session exists
+        session_exists = db.query(TestSession).filter(
+            TestSession.practice_id == p.practice_id, 
+            TestSession.user_id == current_user.id
+        ).first()
+        
         return {
-            "practice_id": latest_practice.practice_id,
-            "title": latest_practice.title,
-            "deadline": latest_practice.deadline
+            "practiceId": str(p.practice_id),
+            "title": p.title,
+            "type": "active" if not session_exists else "pending", 
+            "dueDate": p.deadline.isoformat(),
+            "duration": f"{p.duration_minutes} min",
+            "questionQuantity": len(p.question_ids) if p.question_ids else 0
         }
 
+    if filter_option == "latest":
+        practice = query.first()
+        if not practice:
+            raise HTTPException(status_code=404, detail="No pending tests found")
+        return format_assessment(practice)
+
     elif filter_option == "all":
-        # Returns a list of all matching items
-        return query.all()
+        practices = query.all()
+        return [format_assessment(p) for p in practices]
 
     else:
-        # Try to parse as a number (e.g., '1', '2')
         try:
             limit_count = int(filter_option)
-            return query.limit(limit_count).all()
+            practices = query.limit(limit_count).all()
+            return [format_assessment(p) for p in practices]
         except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid filter option. Use 'latest', 'all', or a number.")
+            raise HTTPException(status_code=400, detail="Invalid filter option.")

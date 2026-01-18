@@ -1,5 +1,6 @@
-from datetime import date
-from typing import Optional
+from datetime import date, datetime
+
+from typing import List, Optional
 import uuid
 from database.enums import Role
 from pydantic import BaseModel, Field, EmailStr
@@ -54,7 +55,7 @@ class UserCreate(BaseModel):
     email: str | None = None
 
 
-    
+
 class EmailUpdate(BaseModel):
     email : str
 class UserResponse(BaseModel):
@@ -90,3 +91,19 @@ class TestStatusResponse(BaseModel):
     correct_answer: Optional[str] = None
     points_awarded: float
     is_test_finished: bool
+
+
+
+
+
+class PracticeCreate(BaseModel):
+    title: str
+    description: Optional[str] = None
+    duration_minutes: int
+    deadline: datetime
+    question_ids: List[uuid.UUID]  # The IDs selected by the creator
+    tags: List[str] = [] 
+
+class AssignmentUpdate(BaseModel):
+    add_user_ids: List[uuid.UUID] = []     # Users to assign
+    remove_user_ids: List[uuid.UUID] = []  # Users to de-assign

@@ -16,7 +16,7 @@ from database.models import User
 from auth.jwt_handler import create_access_token
 from passlib.context import CryptContext
 import uuid
-
+from database.models import Role
 from schemas.user_schema import UserCreate, EmailUpdate
 
 router = APIRouter(prefix="/users")
@@ -25,6 +25,8 @@ SECRET_KEY = "supersecretkey123"
 ALGORITHM = "HS256"
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/users/login")
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
 def get_password_hash(password):
     # Bcrypt fails if input is > 72 bytes, so we truncate
     password = password.encode("utf-8")[:72]
@@ -91,7 +93,14 @@ def get_current_user(request: Request, db: Session = Depends(get_db)):
         raise credentials_exception
         
     return user
-
+def get_current_admin(current_user = Depends(get_current_user)):
+    # Adjust "Role.ADMIN" to match exactly how you defined it in your Enum
+    if current_user.role != Role.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN, 
+            detail="Not authorized. Admin access required."
+        )
+    return current_user
 
 @router.post("/login")
 async def login(

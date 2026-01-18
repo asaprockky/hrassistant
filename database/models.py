@@ -106,12 +106,16 @@ class Question(Base):
     points = Column(Float, default=1.0)
 class Practice(Base):
     __tablename__ = "practice"
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
 
     practice_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     title = Column(String, nullable=False)
     question_ids = Column(ARRAY(UUID(as_uuid=True)), nullable=False) 
     tags = Column(ARRAY(String), nullable=False)
     allowed_users = relationship("User", secondary="practice_assignments", backref="assigned_practices")
+    duration_minutes = Column(Integer, nullable=False, default=30)
+    description = Column(String, nullable=False, default="")
+
     # --- CHANGE END ---
 
     deadline = Column(DateTime, nullable=False, default=datetime.utcnow)
@@ -121,15 +125,10 @@ class Practice(Base):
 # New Association Table
 class PracticeAssignment(Base):
     __tablename__ = "practice_assignments"
-    
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    
-    # Link to the Practice
+    assignment_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     practice_id = Column(UUID(as_uuid=True), ForeignKey("practice.practice_id"), nullable=False)
-    
-    # Link to the User (Immutable ID)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-
+    assigned_at = Column(DateTime, default=datetime.utcnow)
 class TestSession(Base):
     __tablename__ = "test_session"
     session_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
