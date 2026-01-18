@@ -72,9 +72,10 @@ class VacancyResponse(BaseModel):
     class Config:
         orm_mode = True  # allows SQLAlchemy models to be converted to JSON
 
+# --- Pydantic Models ---
 class AnswerCreate(BaseModel):
     question_id: uuid.UUID
-    user_answer: str
+    user_answer: str  # This receives the Option ID (UUID string)
 
 class TestStatusResponse(BaseModel):
     message: str

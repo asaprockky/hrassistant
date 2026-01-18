@@ -94,25 +94,41 @@ class Question(Base):
     __tablename__ = "user_questions"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     text = Column(String, nullable=False)
+    
+    # CHANGE 1: This stores the UUID of the correct option, not the text "A" or "WHERE"
+    correct_answer = Column(UUID(as_uuid=True), nullable=False) 
+    
+    # CHANGE 2: This will now store a LIST of objects, not a dictionary
+    options = Column(JSON, nullable=False) 
+    
     difficulty_level = Column(Integer, nullable=False)
-    correct_answer = Column(String, nullable=False)
-    options = Column(JSON, nullable=False)
     category = Column(String(50))
     points = Column(Float, default=1.0)
-
 class Practice(Base):
     __tablename__ = "practice"
+
     practice_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     title = Column(String, nullable=False)
     question_ids = Column(ARRAY(UUID(as_uuid=True)), nullable=False) 
     tags = Column(ARRAY(String), nullable=False)
-    user_emails = Column(ARRAY(String), nullable=False)
-    deadline = Column(DateTime, nullable=False, default=lambda: datetime.utcnow() + timedelta(days=2))
+    allowed_users = relationship("User", secondary="practice_assignments", backref="assigned_practices")
+    # --- CHANGE END ---
+
+    deadline = Column(DateTime, nullable=False, default=datetime.utcnow)
     is_valid = Column(Boolean, default=True)
     
-    # Relationship to TestSession (Optional, for completeness)
     test_sessions = relationship("TestSession", back_populates="practice")
-
+# New Association Table
+class PracticeAssignment(Base):
+    __tablename__ = "practice_assignments"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    
+    # Link to the Practice
+    practice_id = Column(UUID(as_uuid=True), ForeignKey("practice.practice_id"), nullable=False)
+    
+    # Link to the User (Immutable ID)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
 
 class TestSession(Base):
     __tablename__ = "test_session"

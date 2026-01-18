@@ -1,35 +1,26 @@
 import uuid
 from datetime import datetime, timedelta, timezone
 from sqlalchemy import text
-# Make sure to import Base here
+
+# Ensure these imports match your actual file structure
 from database.database import engine, SessionLocal, Base 
 from database.enums import Role
-from database.models import (
-    Company, User, Created_Vacancy, Question, Practice
-)
+
+# ADDED PracticeAssignment to imports so the table gets created
+from database.models import Company, User, Question, Practice, PracticeAssignment
 
 def seed_sample_data():
-    print("Connecting to PostgreSQL to insert sample data...")
+    print("🚀 Starting Data Seeding...")
     
-    # --- ADD THIS LINE TO CREATE TABLES IN SUPABASE ---
-    print("Creating tables if they don't exist...")
+    # 1. RESET SCHEMA (Crucial for model updates)
+    print("⚠️  Dropping and Recreating tables to apply Schema changes...")
+    Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
-    # --------------------------------------------------
-
-    # Clear existing data to avoid UUID conflicts
-    with engine.connect() as connection:
-        try:
-            print("Cleaning existing data...")
-            connection.execute(text("TRUNCATE TABLE user_answers, test_session, practice, user_questions, candidates, created_vacancies, users, companies CASCADE"))
-            connection.commit()
-        except Exception as e:
-            # If truncate fails because tables were just created and are empty, we can skip
-            print(f"Truncate skipped or failed: {e}")
 
     db = SessionLocal()
     
     try:
-        # 1. Create Sample Company
+        # 2. Create Sample Company
         comp_id = uuid.uuid4()
         sample_company = Company(
             id=comp_id,
@@ -40,15 +31,12 @@ def seed_sample_data():
         )
         db.add(sample_company)
 
-        # 2. Create Sample Users (Password = 1234)
-        admin_id = uuid.uuid4()
-        user_id = uuid.uuid4()
-        
+        # 3. Create Users
         admin_user = User(
-            id=admin_id,
-            username="admin_fayz",
+            id=uuid.uuid4(),
+            username="admin",
             role=Role.ADMIN,
-            password="1234",
+            password="1234", # Hash this in production!
             company_id=comp_id,
             name="Abdulfayz",
             surname="Shokirov",
@@ -56,9 +44,9 @@ def seed_sample_data():
             email="admin@fulstek.uz"
         )
         
-        sample_user = User(
-            id=user_id,
-            username="sample_candidate",
+        sample_candidate = User(
+            id=uuid.uuid4(),
+            username="user",
             role=Role.USER,
             password="1234",
             name="Sample",
@@ -66,44 +54,67 @@ def seed_sample_data():
             age=25,
             email="user@example.com"
         )
-        db.add_all([admin_user, sample_user])
+        db.add_all([admin_user, sample_candidate])
         db.flush() 
 
-        # 3. Create Sample Questions
-        q_ids = [uuid.uuid4(), uuid.uuid4()]
-        questions = [
-            Question(
-                id=q_ids[0],
-                text="What is the primary goal of a Data Scientist?",
-                difficulty_level=1,
-                correct_answer="Extracting insights from data",
-                options={'a': 'Extracting insights from data', 'b': 'Building hardware'},
-                category="Data Science",
-                points=10.0
-            ),
-            Question(
-                id=q_ids[1],
-                text="Which SQL clause is used to filter records?",
-                difficulty_level=1,
-                correct_answer="WHERE",
-                options={'a': 'ORDER BY', 'b': 'WHERE'},
-                category="SQL",
-                points=5.0
-            )
-        ]
-        db.add_all(questions)
+        # 4. Create Questions
+        
+        # --- Question 1: Data Science ---
+        q1_id = uuid.uuid4()
+        opt_1a = uuid.uuid4() # Correct
+        opt_1b = uuid.uuid4()
+        
+        q1 = Question(
+            id=q1_id,
+            text="What is the primary goal of a Data Scientist?",
+            difficulty_level=1,
+            category="Data Science",
+            points=10.0,
+            options=[
+                {"id": str(opt_1a), "text": "Extracting insights from data"},
+                {"id": str(opt_1b), "text": "Building computer hardware"}
+            ],
+            correct_answer=opt_1a 
+        )
 
-        # 4. Create Sample Practice
+        # --- Question 2: SQL ---
+        q2_id = uuid.uuid4()
+        opt_2a = uuid.uuid4()
+        opt_2b = uuid.uuid4() # Correct
+
+        q2 = Question(
+            id=q2_id,
+            text="Which SQL clause is used to filter records?",
+            difficulty_level=1,
+            category="SQL",
+            points=5.0,
+            options=[
+                {"id": str(opt_2a), "text": "ORDER BY"},
+                {"id": str(opt_2b), "text": "WHERE"}
+            ],
+            correct_answer=opt_2b 
+        )
+        
+        db.add_all([q1, q2])
+
+        # 5. Create Practice (UPDATED)
         practice_id = uuid.uuid4()
+        
         sample_practice = Practice(
             practice_id=practice_id,
             title="Initial Technical Assessment",
-            question_ids=q_ids,
+            question_ids=[q1_id, q2_id],
             tags=["SQL", "Python"],
-            user_emails=["user@example.com"],
+            # REMOVED: user_emails=["user@example.com"],
             deadline=datetime.now(timezone.utc) + timedelta(days=7),
             is_valid=True
         )
+        
+        # --- NEW ASSIGNMENT LOGIC ---
+        # Directly append the user object to the relationship list
+        # This automatically creates the entry in the 'practice_assignments' table
+        sample_practice.allowed_users.append(sample_candidate)
+
         db.add(sample_practice)
 
         db.commit()
