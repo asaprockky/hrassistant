@@ -129,6 +129,11 @@ class PracticeAssignment(Base):
     practice_id = Column(UUID(as_uuid=True), ForeignKey("practice.practice_id"), nullable=False)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     assigned_at = Column(DateTime, default=datetime.utcnow)
+    is_completed = Column(Boolean, default=False)
+    completed_at = Column(DateTime, nullable=True)
+
+
+    
 class TestSession(Base):
     __tablename__ = "test_session"
     session_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

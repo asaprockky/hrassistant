@@ -1,40 +1,14 @@
-import pandas as pd
-import uuid
-import json
-import random
+from passlib.context import CryptContext
 
-# Configuration
-categories = ['SQL', 'Python', 'Data Science', 'SSRS']
-difficulty_levels = [1, 2, 3]
-points_options = [1.0, 5.0, 10.0]
+# Initialize the hashing system (same as in your main.py)
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
-def generate_options():
-    opts = []
-    for i in range(4):
-        opts.append({
-            "id": str(uuid.uuid4()),
-            "text": f"Option {chr(65+i)}"
-        })
-    return opts
+# 1. The password you want
+password_to_hash = "1234"
 
-# Generate 100 rows
-data = []
-for i in range(100):
-    cat = random.choice(categories)
-    options_list = generate_options()
-    correct_uuid = random.choice(options_list)['id']
-    
-    data.append({
-        "id": str(uuid.uuid4()),
-        "text": f"Question {i+1}: What is a key concept in {cat}?",
-        "correct_answer": correct_uuid,
-        "options": json.dumps(options_list),
-        "difficulty_level": random.choice(difficulty_levels),
-        "category": cat,
-        "points": random.choice(points_options)
-    })
+# 2. Generate the hash
+hashed_password = pwd_context.hash(password_to_hash)
 
-# Save to CSV
-df = pd.DataFrame(data)
-df.to_csv("100_questions_import.csv", index=False)
-print("File '100_questions_import.csv' has been created successfully!")
+# 3. Print it out so you can copy it
+print(f"Password: {password_to_hash}")
+print(f"Hash to put in DB: {hashed_password}")

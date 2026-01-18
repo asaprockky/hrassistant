@@ -18,11 +18,9 @@ from passlib.context import CryptContext
 import uuid
 from database.models import Role
 from schemas.user_schema import UserCreate, EmailUpdate
-
+from auth.jwt_handler import SECRET_KEY, ALGORITHM
 router = APIRouter(prefix="/users")
 
-SECRET_KEY = "supersecretkey123"
-ALGORITHM = "HS256"
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/users/login")
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -58,7 +56,7 @@ def get_current_user(request: Request, db: Session = Depends(get_db)):
         auth_header = request.headers.get("Authorization")
         if auth_header and auth_header.startswith("Bearer "):
             token = auth_header.split(" ")[1]
-            
+
     if not token:
         # If no token found in either location, we raise the exception
         raise credentials_exception
@@ -102,34 +100,41 @@ def get_current_admin(current_user = Depends(get_current_user)):
         )
     return current_user
 
+# Remove 'async' to fix performance blocking
 @router.post("/login")
-async def login(
+def login(
     response: Response,
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_data)
 ):
+    # 1. Fetch User
     user = db.query(User).filter(User.username == form_data.username).first()
 
-    if not user or user.password != form_data.password:
+    # 2. Verify Password Correctly
+    # We use verify_password(plain, hash) instead of direct comparison
+    if not user or not verify_password(form_data.password, user.password):
         raise HTTPException(status_code=400, detail="Invalid username or password")
 
+    # 3. Create Token
     access_token = create_access_token(
         data={"user_id": str(user.id), "username": user.username}
     )
-    user_role = user.role
-    # set JWT cookie
+    
+    # 4. Set Cookie (Best effort for browsers)
     response.set_cookie(
         key="access_token",
         value=access_token,
         httponly=True,
-        secure=False,
+        secure=False, # Set to True if using HTTPS
         samesite="lax",
         max_age=604800,
     )
 
-    return {"access_token": access_token, "user_role" : user_role}
-
-
+    # 5. Return Token (For Mobile/Postman to use in Headers)
+    return {
+        "access_token": access_token, 
+        "user_role" : user.role
+    }
 
 @router.post("/signup")
 def signup(user_data: UserCreate, response: Response, db: Session = Depends(get_db)):
