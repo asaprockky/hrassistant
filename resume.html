@@ -1,566 +1,365 @@
 <!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Backend visualizer - Abdulfayz</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
-    <style>
-        /* Custom scrollbar for JSON viewer */
-        pre::-webkit-scrollbar {
-            width: 8px;
-            height: 8px;
+<html class="light" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Candidate AI Super-Profile</title>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "primary": "#135bec",
+                        "primary-dark": "#0f4bc4",
+                        "background-light": "#f6f6f8",
+                        "background-dark": "#101622",
+                        "surface-light": "#ffffff",
+                        "surface-dark": "#1e2736",
+                        "text-main": "#111318",
+                        "text-secondary": "#616f89",
+                        "nexus-purple": "#7c3aed",
+                        "nexus-gradient-start": "#4f46e5",
+                        "nexus-gradient-end": "#9333ea",
+                    },
+                    fontFamily: {
+                        "display": ["Inter", "sans-serif"]
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.375rem", 
+                        "lg": "0.5rem", 
+                        "xl": "0.75rem", 
+                        "2xl": "1rem",
+                        "3xl": "1.5rem",
+                        "full": "9999px"
+                    },
+                },
+            },
         }
-        pre::-webkit-scrollbar-track {
-            background: #1e1e1e;
-        }
-        pre::-webkit-scrollbar-thumb {
-            background: #4a4a4a;
-            border-radius: 4px;
-        }
-        
-        /* Syntax highlighting mock */
-        .json-key { color: #9cdcfe; }
-        .json-string { color: #ce9178; }
-        .json-number { color: #b5cea8; }
-        .json-boolean { color: #569cd6; }
-        .json-null { color: #569cd6; }
-
-        .glass-panel {
-            background: rgba(255, 255, 255, 0.95);
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(0,0,0,0.1);
-        }
-        .dark-panel {
-            background: #1e1e1e; 
-            color: #d4d4d4;
+    </script>
+<style type="text/tailwindcss">
+        @layer utilities {
+            .gauge-semi {
+                background: conic-gradient(
+                    #135bec 0% 85%, 
+                    #e5e7eb 85% 100%
+                );
+                transform: rotate(-90deg);
+                border-radius: 50%;
+            }
         }
     </style>
 </head>
-<body class="bg-slate-100 text-slate-800 h-screen flex overflow-hidden font-sans">
+<body class="bg-background-light dark:bg-background-dark font-display text-text-main dark:text-gray-100 antialiased overflow-hidden">
+<div class="flex h-screen w-full">
+<aside class="hidden lg:flex w-72 flex-col justify-between border-r border-[#f0f2f4] dark:border-gray-800 bg-surface-light dark:bg-surface-dark p-6 transition-colors duration-200">
+<div class="flex flex-col gap-8">
+<div class="flex items-center gap-4">
+<div class="bg-center bg-no-repeat aspect-square bg-cover rounded-full size-12 shadow-sm relative" data-alt="Portrait of a student smiling" style='background-image: url("https://lh3.googleusercontent.com/aida-public/AB6AXuCsW1D2WDqY1o1YSSp8WPcCPoQyTSFLpLDYCE5ToH9wQ1Z-D4Nu8EcknVPia1u96puA0h-aWziDKxBQDEUj7MJM86vSsUoYZsLoOZaCWZlN4KH4WNnQF4VQvvornsPtHzwo4AS1W4xEuKGiA7hwDllWyZ2LHWlvZ3rRn9zscLCYeK-cYcnl_zXUwQD4aZQVlsPhPmM8L6VGlf4DCz4nC_QCG1E9wyzaX_9ucQ8Qfpf0F4F0nOXR0N4UaGMeTVIoVcdwhsFjKaHeIgDa");'>
+<span class="absolute bottom-0 right-0 size-3 bg-green-500 border-2 border-white dark:border-gray-800 rounded-full"></span>
+</div>
+<div class="flex flex-col">
+<h1 class="text-text-main dark:text-white text-base font-bold leading-tight">Alex Johnson</h1>
+<p class="text-text-secondary dark:text-gray-400 text-xs font-medium uppercase tracking-wider">Candidate</p>
+</div>
+</div>
+<nav class="flex flex-col gap-2">
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-[#f0f2f4] dark:hover:bg-gray-800 text-text-secondary dark:text-gray-400 dark:hover:text-gray-200 transition-colors" href="#">
+<span class="material-symbols-outlined text-[22px]">dashboard</span>
+<p class="text-sm font-medium leading-normal">Dashboard</p>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-[#f0f2f4] dark:hover:bg-gray-800 text-text-secondary dark:text-gray-400 dark:hover:text-gray-200 transition-colors" href="#">
+<span class="material-symbols-outlined text-[22px]">assignment</span>
+<p class="text-sm font-medium leading-normal">My Assessments</p>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-[#f0f2f4] dark:hover:bg-gray-800 text-text-secondary dark:text-gray-400 dark:hover:text-gray-200 transition-colors" href="#">
+<span class="material-symbols-outlined text-[22px]">badge</span>
+<p class="text-sm font-medium leading-normal">Certificates</p>
+</a>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg bg-primary/10 text-primary dark:text-blue-400 transition-colors" href="#">
+<span class="material-symbols-outlined text-[22px] fill-1">person</span>
+<p class="text-sm font-semibold leading-normal">My AI Profile</p>
+</a>
+</nav>
+</div>
+<div class="flex flex-col gap-2">
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg hover:bg-[#f0f2f4] dark:hover:bg-gray-800 text-text-secondary dark:text-gray-400 dark:hover:text-gray-200 transition-colors" href="#">
+<span class="material-symbols-outlined text-[22px]">settings</span>
+<p class="text-sm font-medium leading-normal">Settings</p>
+</a>
+</div>
+</aside>
+<main class="flex-1 flex flex-col h-full relative overflow-y-auto bg-background-light dark:bg-background-dark">
+<header class="sticky top-0 z-20 flex items-center justify-between border-b border-[#f0f2f4] dark:border-gray-800 bg-surface-light dark:bg-surface-dark px-6 py-4 lg:px-10 lg:py-4">
+<div class="flex items-center gap-4 text-text-main dark:text-white lg:hidden">
+<button class="p-1 -ml-1 rounded-md hover:bg-gray-100 dark:hover:bg-gray-800">
+<span class="material-symbols-outlined">menu</span>
+</button>
+<h2 class="text-lg font-bold leading-tight">AI Super-Profile</h2>
+</div>
+<div class="hidden lg:flex items-center gap-2">
+<span class="text-text-secondary dark:text-gray-400 text-sm font-medium">Candidates</span>
+<span class="material-symbols-outlined text-sm text-gray-400">chevron_right</span>
+<h2 class="text-text-main dark:text-white text-xl font-bold leading-tight tracking-tight">AI Super-Profile</h2>
+</div>
+<div class="flex flex-1 justify-end gap-6 items-center">
+<div class="flex gap-3">
+<button class="flex items-center justify-center rounded-full size-10 bg-[#f0f2f4] dark:bg-gray-800 text-text-main dark:text-white hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
+<span class="material-symbols-outlined text-[20px]">share</span>
+</button>
+<button class="flex items-center justify-center rounded-full size-10 bg-[#f0f2f4] dark:bg-gray-800 text-text-main dark:text-white hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors relative">
+<span class="material-symbols-outlined text-[20px]">notifications</span>
+<span class="absolute top-2 right-2.5 size-2 bg-red-500 rounded-full border border-white dark:border-gray-800"></span>
+</button>
+</div>
+</div>
+</header>
+<div class="p-6 lg:p-10 max-w-[1400px] w-full mx-auto space-y-8">
+<section class="bg-surface-light dark:bg-surface-dark rounded-3xl p-8 border border-gray-100 dark:border-gray-800 shadow-sm relative overflow-hidden">
+<div class="absolute top-0 left-0 w-full h-2 bg-gradient-to-r from-nexus-gradient-start to-nexus-gradient-end"></div>
+<div class="flex flex-col lg:flex-row items-center justify-between gap-8">
+<div class="flex items-center gap-6">
+<div class="relative">
+<div class="size-24 lg:size-28 rounded-full border-4 border-white dark:border-gray-700 shadow-lg overflow-hidden">
+<img alt="Alex Johnson" class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCsW1D2WDqY1o1YSSp8WPcCPoQyTSFLpLDYCE5ToH9wQ1Z-D4Nu8EcknVPia1u96puA0h-aWziDKxBQDEUj7MJM86vSsUoYZsLoOZaCWZlN4KH4WNnQF4VQvvornsPtHzwo4AS1W4xEuKGiA7hwDllWyZ2LHWlvZ3rRn9zscLCYeK-cYcnl_zXUwQD4aZQVlsPhPmM8L6VGlf4DCz4nC_QCG1E9wyzaX_9ucQ8Qfpf0F4F0nOXR0N4UaGMeTVIoVcdwhsFjKaHeIgDa"/>
+</div>
+<div class="absolute bottom-1 right-1 bg-green-500 size-6 rounded-full border-4 border-white dark:border-gray-800 flex items-center justify-center">
+<span class="material-symbols-outlined text-[10px] text-white font-bold">check</span>
+</div>
+</div>
+<div>
+<div class="flex items-center gap-2 mb-1">
+<h1 class="text-3xl font-black text-text-main dark:text-white">Alex Johnson</h1>
+<span class="bg-blue-100 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 text-xs font-bold px-2 py-0.5 rounded-full border border-blue-200 dark:border-blue-800">Open to Work</span>
+</div>
+<p class="text-text-secondary dark:text-gray-400 text-lg">Full Stack Developer • React &amp; Python Specialist</p>
+<div class="flex items-center gap-4 mt-3 text-sm text-text-secondary dark:text-gray-500">
+<span class="flex items-center gap-1"><span class="material-symbols-outlined text-[16px]">location_on</span> San Francisco, CA</span>
+<span class="flex items-center gap-1"><span class="material-symbols-outlined text-[16px]">school</span> Stanford University '24</span>
+</div>
+</div>
+</div>
+<div class="flex items-center gap-8 bg-gray-50 dark:bg-gray-800/50 rounded-2xl p-4 lg:pr-12 border border-gray-100 dark:border-gray-700">
+<div class="relative size-32 flex items-center justify-center">
+<div class="absolute inset-0 rounded-full border-[10px] border-gray-200 dark:border-gray-700"></div>
+<svg class="absolute inset-0 size-full -rotate-90" viewBox="0 0 36 36">
+<path class="text-primary transition-all duration-1000 ease-out" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 -11.5 -5" fill="none" stroke="currentColor" stroke-dasharray="85, 100" stroke-linecap="round" stroke-width="3.5"></path>
+</svg>
+<div class="flex flex-col items-center">
+<span class="text-3xl font-black text-text-main dark:text-white">85</span>
+<span class="text-[10px] font-bold text-text-secondary uppercase tracking-widest">Score</span>
+</div>
+</div>
+<div class="flex flex-col gap-1">
+<h3 class="text-lg font-bold text-text-main dark:text-white">Profile Strength</h3>
+<p class="text-sm text-text-secondary dark:text-gray-400 max-w-[180px]">Top 15% of candidates in your cohort. <a class="text-primary font-semibold hover:underline" href="#">Improve</a></p>
+</div>
+</div>
+</div>
+</section>
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+<div class="lg:col-span-3 flex flex-col gap-6">
+<div class="bg-surface-light dark:bg-surface-dark rounded-2xl p-6 border border-gray-100 dark:border-gray-800 shadow-sm">
+<h3 class="text-base font-bold text-text-main dark:text-white mb-4 flex items-center gap-2">
+<span class="material-symbols-outlined text-gray-400">id_card</span> Contact Info
+                        </h3>
+<div class="space-y-4">
+<div class="flex items-start gap-3">
+<div class="p-2 bg-gray-50 dark:bg-gray-800 rounded-lg text-gray-500">
+<span class="material-symbols-outlined text-[18px]">mail</span>
+</div>
+<div>
+<p class="text-xs text-text-secondary dark:text-gray-500 font-semibold uppercase">Email</p>
+<p class="text-sm font-medium text-text-main dark:text-white truncate" title="alex.johnson@example.com">alex.j@example.com</p>
+</div>
+</div>
+<div class="flex items-start gap-3">
+<div class="p-2 bg-gray-50 dark:bg-gray-800 rounded-lg text-gray-500">
+<span class="material-symbols-outlined text-[18px]">call</span>
+</div>
+<div>
+<p class="text-xs text-text-secondary dark:text-gray-500 font-semibold uppercase">Phone</p>
+<p class="text-sm font-medium text-text-main dark:text-white">+1 (555) 012-3456</p>
+</div>
+</div>
+<div class="flex items-start gap-3">
+<div class="p-2 bg-gray-50 dark:bg-gray-800 rounded-lg text-gray-500">
+<span class="material-symbols-outlined text-[18px]">link</span>
+</div>
+<div>
+<p class="text-xs text-text-secondary dark:text-gray-500 font-semibold uppercase">Portfolio</p>
+<a class="text-sm font-medium text-primary hover:underline" href="#">alexjohnson.dev</a>
+</div>
+</div>
+</div>
+</div>
+<div class="bg-gradient-to-br from-[#0a66c2] to-[#004182] rounded-2xl p-6 shadow-lg text-white relative overflow-hidden group">
+<div class="absolute top-0 right-0 p-4 opacity-10">
+<svg class="size-24 fill-current" viewBox="0 0 24 24"><path d="M19 0h-14c-2.761 0-5 2.239-5 5v14c0 2.761 2.239 5 5 5h14c2.762 0 5-2.239 5-5v-14c0-2.761-2.238-5-5-5zm-11 19h-3v-11h3v11zm-1.5-12.268c-.966 0-1.75-.79-1.75-1.764s.784-1.764 1.75-1.764 1.75.79 1.75 1.764-.783 1.764-1.75 1.764zm13.5 12.268h-3v-5.604c0-3.368-4-3.113-4 0v5.604h-3v-11h3v1.765c1.396-2.586 7-2.777 7 2.476v6.759z"></path></svg>
+</div>
+<div class="relative z-10">
+<div class="flex items-center gap-2 mb-2">
+<span class="material-symbols-outlined text-white">medical_services</span>
+<h3 class="font-bold text-lg">LinkedIn Surgeon</h3>
+</div>
+<p class="text-blue-100 text-sm mb-4 leading-relaxed">Your headline is generic. Our AI suggests stronger keywords for visibility.</p>
+<div class="bg-white/10 backdrop-blur-md rounded-lg p-3 border border-white/20 mb-4">
+<p class="text-xs font-mono text-blue-50 line-through opacity-70 mb-1">"Student at Stanford"</p>
+<p class="text-xs font-bold text-white flex gap-1 items-center">
+<span class="material-symbols-outlined text-[12px] text-green-300">arrow_right_alt</span> 
+                                    "Aspiring Full Stack Engineer | Python &amp; React"
+                                </p>
+</div>
+<button class="w-full bg-white text-[#0a66c2] text-sm font-bold py-2 rounded-lg hover:bg-blue-50 transition-colors">
+                                Optimize Profile
+                            </button>
+</div>
+</div>
+<div class="bg-surface-light dark:bg-surface-dark rounded-2xl p-6 border border-gray-100 dark:border-gray-800 shadow-sm">
+<h3 class="text-sm font-bold text-text-main dark:text-white mb-4 uppercase tracking-wider text-xs text-text-secondary">Verified Skills</h3>
+<div class="flex flex-wrap gap-2">
+<span class="px-3 py-1 rounded-full bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 text-xs font-bold border border-blue-100 dark:border-blue-800">React</span>
+<span class="px-3 py-1 rounded-full bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 text-xs font-bold border border-blue-100 dark:border-blue-800">Python</span>
+<span class="px-3 py-1 rounded-full bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300 text-xs font-bold border border-blue-100 dark:border-blue-800">SQL</span>
+<span class="px-3 py-1 rounded-full bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400 text-xs font-medium border border-gray-200 dark:border-gray-700 opacity-60">Docker</span>
+<span class="px-3 py-1 rounded-full bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-400 text-xs font-medium border border-gray-200 dark:border-gray-700 opacity-60">AWS</span>
+</div>
+</div>
+</div>
+<div class="lg:col-span-6 flex flex-col gap-6">
+<div class="bg-surface-light dark:bg-surface-dark rounded-2xl border border-nexus-purple/20 shadow-lg shadow-purple-500/5 relative overflow-hidden">
+<div class="p-6 border-b border-gray-100 dark:border-gray-800 bg-gradient-to-r from-gray-50 to-white dark:from-gray-800 dark:to-surface-dark">
+<div class="flex items-center justify-between mb-2">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-nexus-purple text-2xl animate-pulse">auto_awesome</span>
+<h2 class="text-xl font-bold text-gray-900 dark:text-white">NEXUS AI Professional Review</h2>
+</div>
+<span class="bg-nexus-purple/10 text-nexus-purple text-xs font-bold px-3 py-1 rounded-full">Updated: 2h ago</span>
+</div>
+<p class="text-sm text-text-secondary dark:text-gray-400">Deep learning analysis of your assessment performance, resume, and market fit.</p>
+</div>
+<div class="p-6 space-y-6">
+<div class="flex gap-4">
+<div class="flex-shrink-0 mt-1">
+<div class="size-8 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center text-green-600 dark:text-green-400">
+<span class="material-symbols-outlined text-[18px]">trending_up</span>
+</div>
+</div>
+<div>
+<h4 class="text-sm font-bold text-text-main dark:text-white mb-1">High Potential in Frontend Architecture</h4>
+<p class="text-sm text-text-secondary dark:text-gray-400 leading-relaxed">
+                                        Your performance in the "React Components" module places you in the <span class="font-bold text-green-600 dark:text-green-400">top 5%</span>. The AI detects strong component composition patterns. Recommendation: Target "Frontend Architect" roles for internships.
+                                    </p>
+</div>
+</div>
+<div class="flex gap-4">
+<div class="flex-shrink-0 mt-1">
+<div class="size-8 rounded-full bg-orange-100 dark:bg-orange-900/30 flex items-center justify-center text-orange-600 dark:text-orange-400">
+<span class="material-symbols-outlined text-[18px]">model_training</span>
+</div>
+</div>
+<div>
+<h4 class="text-sm font-bold text-text-main dark:text-white mb-1">Backend Optimization Needed</h4>
+<p class="text-sm text-text-secondary dark:text-gray-400 leading-relaxed">
+                                        While your SQL queries are correct, execution time analysis suggests inefficiencies in complex joins. The AI suggests reviewing <span class="font-semibold text-text-main dark:text-gray-300">Database Indexing</span> and <span class="font-semibold text-text-main dark:text-gray-300">Query Optimization</span>.
+                                    </p>
+<div class="mt-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg p-3 border border-gray-100 dark:border-gray-700 flex items-center gap-3">
+<div class="size-10 bg-white dark:bg-gray-700 rounded shadow-sm flex items-center justify-center">
+<span class="material-symbols-outlined text-orange-500">play_circle</span>
+</div>
+<div>
+<p class="text-xs font-bold text-text-main dark:text-white">Recommended: SQL Performance Masterclass</p>
+<p class="text-[10px] text-text-secondary">45 mins • Intermediate</p>
+</div>
+</div>
+</div>
+</div>
+<div class="flex gap-4">
+<div class="flex-shrink-0 mt-1">
+<div class="size-8 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center text-blue-600 dark:text-blue-400">
+<span class="material-symbols-outlined text-[18px]">psychology</span>
+</div>
+</div>
+<div>
+<h4 class="text-sm font-bold text-text-main dark:text-white mb-1">Communication Pattern Analysis</h4>
+<p class="text-sm text-text-secondary dark:text-gray-400 leading-relaxed">
+                                        Analysis of your text responses indicates a <span class="font-bold text-blue-600 dark:text-blue-400">Collaborative</span> style. Recruiters in FinTech value this trait highly. Ensure this is highlighted in your cover letters.
+                                    </p>
+</div>
+</div>
+</div>
+<div class="bg-gray-50 dark:bg-gray-800/30 p-4 border-t border-gray-100 dark:border-gray-800 flex justify-between items-center">
+<p class="text-xs text-text-secondary italic">AI confidence score: 98.4%</p>
+<button class="text-xs font-bold text-nexus-purple hover:text-purple-700 flex items-center gap-1">
+                                Generate Full Report <span class="material-symbols-outlined text-[14px]">arrow_forward</span>
+</button>
+</div>
+</div>
+</div>
+<div class="lg:col-span-3 flex flex-col gap-6">
+<div class="bg-surface-light dark:bg-surface-dark rounded-2xl p-6 border border-gray-100 dark:border-gray-800 shadow-sm h-full">
+<div class="flex items-center justify-between mb-6">
+<h3 class="text-base font-bold text-text-main dark:text-white">Career Roadmap</h3>
+<button class="text-gray-400 hover:text-primary"><span class="material-symbols-outlined">edit</span></button>
+</div>
+<div class="relative pl-4 space-y-8 before:content-[''] before:absolute before:left-[19px] before:top-2 before:bottom-4 before:w-[2px] before:bg-gray-200 dark:before:bg-gray-700">
+<div class="relative pl-8 group">
+<div class="absolute left-0 top-1 size-[10px] bg-green-500 rounded-full ring-4 ring-white dark:ring-surface-dark z-10"></div>
+<div class="flex flex-col">
+<span class="text-xs font-bold text-green-600 dark:text-green-400 uppercase mb-1">Achieved</span>
+<h4 class="text-sm font-bold text-text-main dark:text-white">Frontend Basics</h4>
+<p class="text-xs text-text-secondary mt-1">HTML, CSS, JS Mastery</p>
+</div>
+</div>
+<div class="relative pl-8 group">
+<div class="absolute left-0 top-1 size-[10px] bg-green-500 rounded-full ring-4 ring-white dark:ring-surface-dark z-10"></div>
+<div class="flex flex-col">
+<span class="text-xs font-bold text-green-600 dark:text-green-400 uppercase mb-1">Achieved</span>
+<h4 class="text-sm font-bold text-text-main dark:text-white">React Certification</h4>
+<p class="text-xs text-text-secondary mt-1">Advanced Hooks &amp; Context</p>
+</div>
+</div>
+<div class="relative pl-8 group">
+<div class="absolute left-0 top-1 size-[10px] bg-blue-500 rounded-full ring-4 ring-white dark:ring-surface-dark z-10 animate-pulse"></div>
+<div class="flex flex-col">
+<span class="text-xs font-bold text-blue-600 dark:text-blue-400 uppercase mb-1">In Progress</span>
+<h4 class="text-sm font-bold text-text-main dark:text-white">Full Stack Integration</h4>
+<div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5 mt-2">
+<div class="bg-blue-500 h-1.5 rounded-full" style="width: 60%"></div>
+</div>
+<p class="text-[10px] text-text-secondary mt-1 text-right">60% Complete</p>
+</div>
+</div>
+<div class="relative pl-8 group">
+<div class="absolute left-0 top-1 size-[10px] bg-white border-2 border-orange-400 rounded-full ring-4 ring-white dark:ring-surface-dark z-10"></div>
+<div class="flex flex-col">
+<span class="text-xs font-bold text-orange-500 uppercase mb-1 flex items-center gap-1">
+<span class="material-symbols-outlined text-[12px]">warning</span> Missing
+                                    </span>
+<h4 class="text-sm font-bold text-gray-500 dark:text-gray-400">Containerization</h4>
+<p class="text-xs text-text-secondary mt-1">Recommended: Docker &amp; K8s</p>
+<button class="mt-2 text-xs font-bold text-primary border border-primary/20 bg-primary/5 rounded px-2 py-1 w-fit hover:bg-primary hover:text-white transition-colors">
+                                        + Add to Plan
+                                    </button>
+</div>
+</div>
+<div class="relative pl-8 group opacity-50">
+<div class="absolute left-0 top-1 size-[10px] bg-gray-300 rounded-full ring-4 ring-white dark:ring-surface-dark z-10"></div>
+<div class="flex flex-col">
+<span class="text-xs font-bold text-gray-500 uppercase mb-1">Goal</span>
+<h4 class="text-sm font-bold text-text-main dark:text-white">Senior Architect</h4>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</main>
+</div>
 
-    <!-- SIDEBAR -->
-    <aside class="w-64 bg-slate-900 text-white flex flex-col shadow-xl z-20">
-        <div class="p-6 border-b border-slate-700">
-            <h1 class="text-xl font-bold flex items-center gap-2">
-                <i class="fa-solid fa-server text-indigo-400"></i>
-                <span>Dev<span class="text-indigo-400">Specs</span></span>
-            </h1>
-            <p class="text-xs text-slate-400 mt-1">Backend Visualizer</p>
-        </div>
-        
-        <nav class="flex-1 p-4 space-y-2">
-            <button onclick="switchTab('dashboard')" class="nav-btn w-full text-left px-4 py-3 rounded-lg hover:bg-slate-800 transition-colors flex items-center gap-3 bg-slate-800 text-indigo-400" id="btn-dashboard">
-                <i class="fa-solid fa-chart-line w-5"></i> Dashboard
-            </button>
-            <button onclick="switchTab('tests')" class="nav-btn w-full text-left px-4 py-3 rounded-lg hover:bg-slate-800 transition-colors flex items-center gap-3" id="btn-tests">
-                <i class="fa-solid fa-list-check w-5"></i> Available Tests
-            </button>
-            <button onclick="switchTab('active')" class="nav-btn w-full text-left px-4 py-3 rounded-lg hover:bg-slate-800 transition-colors flex items-center gap-3" id="btn-active">
-                <i class="fa-solid fa-laptop-code w-5"></i> Active Session
-            </button>
-            <button onclick="switchTab('results')" class="nav-btn w-full text-left px-4 py-3 rounded-lg hover:bg-slate-800 transition-colors flex items-center gap-3" id="btn-results">
-                <i class="fa-solid fa-history w-5"></i> Results
-            </button>
-        </nav>
-
-        <div class="p-4 border-t border-slate-700">
-            <div class="flex items-center gap-3">
-                <div class="w-10 h-10 rounded-full bg-indigo-500 flex items-center justify-center text-white font-bold">AS</div>
-                <div>
-                    <p class="text-sm font-semibold">Abdulfayz Shokirov</p>
-                    <p class="text-xs text-slate-400">Student / Admin</p>
-                </div>
-            </div>
-        </div>
-    </aside>
-
-    <!-- MAIN CONTENT -->
-    <main class="flex-1 flex flex-col relative overflow-hidden">
-        
-        <!-- HEADER -->
-        <header class="h-16 bg-white border-b flex items-center justify-between px-6 shadow-sm z-10">
-            <h2 class="text-xl font-bold text-slate-700" id="page-title">Dashboard</h2>
-            
-            <!-- DEV MODE TOGGLE -->
-            <div class="flex items-center gap-3 bg-slate-100 p-1.5 rounded-lg border border-slate-200">
-                <span class="text-xs font-bold text-slate-500 px-2 uppercase tracking-wide">Mode:</span>
-                <button onclick="toggleDevMode(false)" id="mode-user" class="px-3 py-1.5 rounded bg-white shadow text-xs font-bold text-slate-700 transition-all">
-                    User UI
-                </button>
-                <button onclick="toggleDevMode(true)" id="mode-dev" class="px-3 py-1.5 rounded hover:bg-white/50 text-xs font-bold text-slate-500 transition-all flex items-center gap-1">
-                    <i class="fa-solid fa-code"></i> Backend API
-                </button>
-            </div>
-        </header>
-
-        <!-- SCROLLABLE CONTENT AREA -->
-        <div class="flex-1 overflow-auto p-8 relative" id="content-area">
-            <!-- Dynamic Content Injected Here -->
-        </div>
-
-        <!-- API INSPECTOR OVERLAY (Bottom Sheet style) -->
-        <div id="inspector" class="fixed bottom-0 right-0 w-1/3 h-[calc(100vh-4rem)] bg-slate-900 border-l border-slate-700 shadow-2xl transform translate-x-full transition-transform duration-300 z-30 flex flex-col">
-            <div class="p-4 bg-slate-800 border-b border-slate-700 flex justify-between items-center">
-                <div>
-                    <span class="text-xs font-bold text-indigo-400 uppercase tracking-wider">API Inspector</span>
-                    <h3 class="text-lg font-mono text-white mt-1" id="inspector-method">GET /api/...</h3>
-                </div>
-                <button onclick="closeInspector()" class="text-slate-400 hover:text-white transition-colors">
-                    <i class="fa-solid fa-xmark text-xl"></i>
-                </button>
-            </div>
-            
-            <div class="flex-1 overflow-auto p-4 space-y-6">
-                <!-- Description -->
-                <div>
-                    <p class="text-xs font-bold text-slate-500 uppercase mb-2">Endpoint Logic</p>
-                    <p class="text-slate-300 text-sm leading-relaxed" id="inspector-desc">...</p>
-                </div>
-
-                <!-- Request -->
-                <div>
-                    <div class="flex justify-between items-end mb-2">
-                        <p class="text-xs font-bold text-green-400 uppercase">Request Payload (Frontend sends)</p>
-                        <span class="text-[10px] text-slate-500">application/json</span>
-                    </div>
-                    <pre class="bg-[#1e1e1e] p-3 rounded-lg border border-slate-700 text-xs font-mono overflow-x-auto" id="inspector-req">{}</pre>
-                </div>
-
-                <!-- Response -->
-                <div>
-                    <div class="flex justify-between items-end mb-2">
-                        <p class="text-xs font-bold text-blue-400 uppercase">Response Expected (Backend returns)</p>
-                        <span class="text-[10px] text-slate-500">200 OK</span>
-                    </div>
-                    <pre class="bg-[#1e1e1e] p-3 rounded-lg border border-slate-700 text-xs font-mono overflow-x-auto" id="inspector-res">{}</pre>
-                </div>
-            </div>
-        </div>
-
-    </main>
-
-    <script>
-        // --- DATA & CONFIG ---
-        
-        const currentUser = {
-            id: "u_8821",
-            name: "Abdulfayz Shokirov",
-            email: "abdulfayz@example.com"
-        };
-
-        const apiSpecs = {
-            // Dashboard APIs
-            fetchDashboard: {
-                method: "GET",
-                endpoint: "/api/v1/users/me/dashboard",
-                description: "Load summary cards. Backend calculates averages from 'test_results' table.",
-                request: null,
-                response: {
-                    activeTests: 2,
-                    completedTests: 14,
-                    averageScore: 84.5,
-                    upcomingExams: [
-                        { id: 101, title: "Advanced SQL", date: "2025-12-30" }
-                    ]
-                }
-            },
-            
-            // Test Library APIs
-            fetchTests: {
-                method: "GET",
-                endpoint: "/api/v1/tests?status=available",
-                description: "Query available tests. Filter by user permissions/subscription.",
-                request: null,
-                response: [
-                    { id: 1, title: "Python Basics", duration: 45, questionCount: 30, difficulty: "Easy" },
-                    { id: 2, title: "Data Science & Pandas", duration: 90, questionCount: 50, difficulty: "Medium" },
-                    { id: 3, title: "SSRS Reporting Mastery", duration: 60, questionCount: 25, difficulty: "Hard" }
-                ]
-            },
-
-            // Active Test APIs
-            startTest: {
-                method: "POST",
-                endpoint: "/api/v1/tests/{id}/start",
-                description: "Initialize session. Create row in 'sessions' table, lock start_time.",
-                request: { testId: 2, userId: "u_8821" },
-                response: {
-                    sessionId: "sess_9901",
-                    startTime: "2025-12-28T10:00:00Z",
-                    questions: [
-                        { qId: 101, text: "What is a DataFrame?", options: ["A", "B", "C"], type: "multiple_choice" }
-                    ]
-                }
-            },
-            submitAnswer: {
-                method: "POST",
-                endpoint: "/api/v1/sessions/{sessionId}/answer",
-                description: "Autosave answer. Upsert into 'answers' table.",
-                request: { sessionId: "sess_9901", questionId: 101, selectedOption: "B" },
-                response: { success: true, savedAt: "2025-12-28T10:05:00Z" }
-            },
-            finishTest: {
-                method: "POST",
-                endpoint: "/api/v1/sessions/{sessionId}/submit",
-                description: "Close session. Trigger grading engine. Return final score.",
-                request: { sessionId: "sess_9901" },
-                response: {
-                    score: 88,
-                    totalQuestions: 50,
-                    passed: true,
-                    certificationUrl: "/certs/sess_9901.pdf"
-                }
-            },
-
-            // Result APIs
-            fetchResults: {
-                method: "GET",
-                endpoint: "/api/v1/users/me/results",
-                description: "Fetch historical data for the results table.",
-                request: null,
-                response: [
-                    { testTitle: "SQL Intermediate", score: 92, date: "2025-11-10", status: "Passed" },
-                    { testTitle: "Intro to Algorithms", score: 76, date: "2025-11-15", status: "Passed" }
-                ]
-            },
-            downloadCert: {
-                method: "GET",
-                endpoint: "/api/v1/certificates/{id}/download",
-                description: "Generate or fetch signed PDF URL.",
-                request: null,
-                response: { url: "https://s3.bucket/certs/cert_123.pdf" }
-            }
-        };
-
-        // --- STATE ---
-        let isDevMode = false;
-        let currentTab = 'dashboard';
-
-        // --- RENDER FUNCTIONS ---
-
-        function render() {
-            const container = document.getElementById('content-area');
-            const title = document.getElementById('page-title');
-            
-            // Highlight Nav
-            document.querySelectorAll('.nav-btn').forEach(btn => {
-                btn.classList.remove('bg-slate-800', 'text-indigo-400');
-                btn.classList.add('text-slate-300');
-            });
-            document.getElementById(`btn-${currentTab}`).classList.add('bg-slate-800', 'text-indigo-400');
-            document.getElementById(`btn-${currentTab}`).classList.remove('text-slate-300');
-
-            // Render Content
-            if (currentTab === 'dashboard') renderDashboard(container, title);
-            else if (currentTab === 'tests') renderTests(container, title);
-            else if (currentTab === 'active') renderActiveTest(container, title);
-            else if (currentTab === 'results') renderResults(container, title);
-        }
-
-        // 1. DASHBOARD RENDERER
-        function renderDashboard(container, title) {
-            title.innerText = "Dashboard";
-            const btnClass = isDevMode 
-                ? "bg-slate-800 text-green-400 font-mono text-xs py-2 px-3 rounded border border-green-900 w-full text-left hover:bg-slate-900" 
-                : "hidden"; // Dashboard usually loads on mount, no specific button needed for user view demo, but we show load button for dev
-
-            container.innerHTML = `
-                ${isDevMode ? `<div class="mb-6"><button onclick="inspect('fetchDashboard')" class="${btnClass}">GET /api/v1/users/me/dashboard</button></div>` : ''}
-                
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-                    <!-- Stat Card 1 -->
-                    <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-                        <div class="flex justify-between items-start">
-                            <div>
-                                <p class="text-sm font-medium text-slate-500">Average Score</p>
-                                <h3 class="text-3xl font-bold text-slate-800 mt-2">84.5%</h3>
-                            </div>
-                            <div class="p-2 bg-indigo-50 rounded-lg text-indigo-600"><i class="fa-solid fa-chart-pie"></i></div>
-                        </div>
-                    </div>
-                    <!-- Stat Card 2 -->
-                    <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-                        <div class="flex justify-between items-start">
-                            <div>
-                                <p class="text-sm font-medium text-slate-500">Tests Completed</p>
-                                <h3 class="text-3xl font-bold text-slate-800 mt-2">14</h3>
-                            </div>
-                            <div class="p-2 bg-green-50 rounded-lg text-green-600"><i class="fa-solid fa-check-circle"></i></div>
-                        </div>
-                    </div>
-                    <!-- Stat Card 3 -->
-                    <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-                        <div class="flex justify-between items-start">
-                            <div>
-                                <p class="text-sm font-medium text-slate-500">Active Exams</p>
-                                <h3 class="text-3xl font-bold text-slate-800 mt-2">2</h3>
-                            </div>
-                            <div class="p-2 bg-orange-50 rounded-lg text-orange-600"><i class="fa-solid fa-clock"></i></div>
-                        </div>
-                    </div>
-                </div>
-
-                <h3 class="text-lg font-bold text-slate-700 mb-4">Upcoming Exams</h3>
-                <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                    <div class="p-4 border-b border-slate-100 flex justify-between items-center hover:bg-slate-50 transition-colors cursor-pointer" onclick="isDevMode ? inspect('fetchDashboard') : null">
-                        <div class="flex items-center gap-4">
-                            <div class="w-10 h-10 rounded-lg bg-blue-100 text-blue-600 flex items-center justify-center font-bold">SQL</div>
-                            <div>
-                                <h4 class="font-semibold text-slate-800">Advanced SQL Querying</h4>
-                                <p class="text-xs text-slate-500">Dec 30, 2025 • 2 Hours</p>
-                            </div>
-                        </div>
-                        <button class="text-indigo-600 text-sm font-medium hover:underline">View Details</button>
-                    </div>
-                </div>
-            `;
-        }
-
-        // 2. TESTS LIST RENDERER
-        function renderTests(container, title) {
-            title.innerText = "Available Tests";
-            const apiBtn = (key) => isDevMode 
-                ? `<button onclick="inspect('${key}')" class="w-full text-left font-mono text-xs text-green-400 bg-slate-900 p-2 rounded mb-2 border border-green-800 hover:bg-black transition-colors">POST ${apiSpecs[key].endpoint}</button>`
-                : `<button onclick="switchTab('active')" class="w-full bg-indigo-600 text-white py-2 rounded font-medium hover:bg-indigo-700 transition-colors">Start Now</button>`;
-
-            const loadBtn = isDevMode ? `<div class="mb-6"><button onclick="inspect('fetchTests')" class="bg-slate-800 text-blue-400 font-mono text-xs py-2 px-3 rounded border border-blue-900 w-full text-left hover:bg-slate-900">GET /api/v1/tests?status=available</button></div>` : '';
-
-            container.innerHTML = `
-                ${loadBtn}
-                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    <!-- Test Card 1 -->
-                    <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col">
-                        <div class="flex justify-between items-start mb-4">
-                            <span class="bg-green-100 text-green-700 text-xs font-bold px-2 py-1 rounded uppercase">Easy</span>
-                            <span class="text-slate-400 text-sm"><i class="fa-regular fa-clock"></i> 45m</span>
-                        </div>
-                        <h3 class="text-lg font-bold text-slate-800 mb-2">Python Basics</h3>
-                        <p class="text-slate-500 text-sm mb-6 flex-1">Variables, Loops, Functions, and basic Data Structures.</p>
-                        ${apiBtn('startTest')}
-                    </div>
-
-                    <!-- Test Card 2 -->
-                    <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col ring-2 ring-indigo-50">
-                        <div class="flex justify-between items-start mb-4">
-                            <span class="bg-yellow-100 text-yellow-700 text-xs font-bold px-2 py-1 rounded uppercase">Medium</span>
-                            <span class="text-slate-400 text-sm"><i class="fa-regular fa-clock"></i> 90m</span>
-                        </div>
-                        <h3 class="text-lg font-bold text-slate-800 mb-2">Data Science & Pandas</h3>
-                        <p class="text-slate-500 text-sm mb-6 flex-1">DataFrames, Cleaning, Aggregation, and Plotting.</p>
-                        ${apiBtn('startTest')}
-                    </div>
-
-                    <!-- Test Card 3 -->
-                    <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col">
-                        <div class="flex justify-between items-start mb-4">
-                            <span class="bg-red-100 text-red-700 text-xs font-bold px-2 py-1 rounded uppercase">Hard</span>
-                            <span class="text-slate-400 text-sm"><i class="fa-regular fa-clock"></i> 60m</span>
-                        </div>
-                        <h3 class="text-lg font-bold text-slate-800 mb-2">SSRS Reporting Mastery</h3>
-                        <p class="text-slate-500 text-sm mb-6 flex-1">Advanced Layouts, Expressions, and Parameters.</p>
-                        ${apiBtn('startTest')}
-                    </div>
-                </div>
-            `;
-        }
-
-        // 3. ACTIVE TEST RENDERER
-        function renderActiveTest(container, title) {
-            title.innerText = "Data Science & Pandas (Session #9901)";
-            
-            const submitBtn = isDevMode
-                ? `<button onclick="inspect('finishTest')" class="bg-red-900/20 border border-red-500 text-red-600 font-mono text-xs py-3 px-4 rounded w-full text-center hover:bg-red-900/30">POST /api/sessions/sess_9901/submit</button>`
-                : `<button onclick="switchTab('results')" class="bg-indigo-600 text-white font-bold py-3 px-6 rounded-lg shadow-lg hover:bg-indigo-700 w-full">Submit Final Exam</button>`;
-
-            const answerBtn = (opt) => isDevMode
-                ? `<button onclick="inspect('submitAnswer')" class="w-full text-left p-4 rounded-lg border border-slate-200 hover:border-green-500 hover:bg-green-50 transition-all group">
-                    <div class="flex items-center justify-between">
-                        <span class="font-medium text-slate-700">${opt}</span>
-                        <span class="font-mono text-[10px] text-green-600 opacity-0 group-hover:opacity-100">POST /answer</span>
-                    </div>
-                   </button>`
-                : `<button class="w-full text-left p-4 rounded-lg border border-slate-200 hover:border-indigo-500 hover:bg-indigo-50 transition-all text-slate-700 font-medium">
-                    ${opt}
-                   </button>`;
-
-            container.innerHTML = `
-                <div class="flex gap-8 h-full">
-                    <!-- Question Area -->
-                    <div class="flex-1 flex flex-col">
-                        <div class="bg-white p-8 rounded-xl shadow-sm border border-slate-200 flex-1">
-                            <div class="mb-6 flex justify-between">
-                                <span class="text-slate-400 font-medium">Question 5 of 50</span>
-                                <span class="text-red-500 font-bold"><i class="fa-regular fa-clock"></i> 45:12</span>
-                            </div>
-                            <h2 class="text-2xl font-bold text-slate-800 mb-8">
-                                Which function is used to convert a JSON string into a Pandas DataFrame?
-                            </h2>
-                            
-                            <div class="space-y-4">
-                                ${answerBtn('A. pd.read_json()')}
-                                ${answerBtn('B. pd.to_json()')}
-                                ${answerBtn('C. pd.json_normalize()')}
-                                ${answerBtn('D. pd.from_dict()')}
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Sidebar Area -->
-                    <div class="w-64 flex flex-col gap-4">
-                        <div class="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-                            <h4 class="font-bold text-slate-700 mb-4">Question Map</h4>
-                            <div class="grid grid-cols-5 gap-2">
-                                <div class="aspect-square bg-green-500 rounded text-white flex items-center justify-center text-xs font-bold">1</div>
-                                <div class="aspect-square bg-green-500 rounded text-white flex items-center justify-center text-xs font-bold">2</div>
-                                <div class="aspect-square bg-green-500 rounded text-white flex items-center justify-center text-xs font-bold">3</div>
-                                <div class="aspect-square bg-green-500 rounded text-white flex items-center justify-center text-xs font-bold">4</div>
-                                <div class="aspect-square bg-indigo-600 rounded text-white flex items-center justify-center text-xs font-bold ring-2 ring-offset-2 ring-indigo-600">5</div>
-                                <div class="aspect-square bg-slate-100 rounded text-slate-400 flex items-center justify-center text-xs font-bold">6</div>
-                                <!-- ... more ... -->
-                            </div>
-                        </div>
-                        <div class="mt-auto">
-                            ${submitBtn}
-                        </div>
-                    </div>
-                </div>
-            `;
-        }
-
-        // 4. RESULTS RENDERER
-        function renderResults(container, title) {
-            title.innerText = "My Results";
-            const loadBtn = isDevMode ? `<div class="mb-6"><button onclick="inspect('fetchResults')" class="bg-slate-800 text-purple-400 font-mono text-xs py-2 px-3 rounded border border-purple-900 w-full text-left hover:bg-slate-900">GET /api/v1/users/me/results</button></div>` : '';
-            
-            const downloadBtn = isDevMode
-                ? `<button onclick="inspect('downloadCert')" class="text-purple-400 font-mono text-xs hover:text-purple-300">GET /download</button>`
-                : `<button class="text-indigo-600 hover:text-indigo-800 font-medium text-sm flex items-center gap-1"><i class="fa-solid fa-download"></i> Certificate</button>`;
-
-            container.innerHTML = `
-                ${loadBtn}
-                <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                    <table class="w-full text-left">
-                        <thead class="bg-slate-50 border-b border-slate-200">
-                            <tr>
-                                <th class="p-4 text-xs font-bold text-slate-500 uppercase">Test Title</th>
-                                <th class="p-4 text-xs font-bold text-slate-500 uppercase">Date</th>
-                                <th class="p-4 text-xs font-bold text-slate-500 uppercase">Score</th>
-                                <th class="p-4 text-xs font-bold text-slate-500 uppercase">Status</th>
-                                <th class="p-4 text-xs font-bold text-slate-500 uppercase">Action</th>
-                            </tr>
-                        </thead>
-                        <tbody class="divide-y divide-slate-100">
-                            <tr class="hover:bg-slate-50">
-                                <td class="p-4 font-medium text-slate-800">SQL Intermediate</td>
-                                <td class="p-4 text-slate-500 text-sm">2025-11-10</td>
-                                <td class="p-4 text-green-600 font-bold">92%</td>
-                                <td class="p-4"><span class="bg-green-100 text-green-700 px-2 py-1 rounded text-xs font-bold">Passed</span></td>
-                                <td class="p-4">${downloadBtn}</td>
-                            </tr>
-                            <tr class="hover:bg-slate-50">
-                                <td class="p-4 font-medium text-slate-800">Intro to Algorithms</td>
-                                <td class="p-4 text-slate-500 text-sm">2025-11-15</td>
-                                <td class="p-4 text-green-600 font-bold">76%</td>
-                                <td class="p-4"><span class="bg-green-100 text-green-700 px-2 py-1 rounded text-xs font-bold">Passed</span></td>
-                                <td class="p-4">${downloadBtn}</td>
-                            </tr>
-                        </tbody>
-                    </table>
-                </div>
-            `;
-        }
-
-
-        // --- LOGIC HANDLERS ---
-
-        function switchTab(tab) {
-            currentTab = tab;
-            render();
-            // In mobile, we might close sidebar here
-        }
-
-        function toggleDevMode(status) {
-            isDevMode = status;
-            
-            // Update toggle UI
-            const userBtn = document.getElementById('mode-user');
-            const devBtn = document.getElementById('mode-dev');
-            
-            if (status) {
-                userBtn.classList.remove('bg-white', 'shadow', 'text-slate-700');
-                userBtn.classList.add('text-slate-500', 'hover:bg-white/50');
-                
-                devBtn.classList.remove('text-slate-500', 'hover:bg-white/50');
-                devBtn.classList.add('bg-white', 'shadow', 'text-indigo-600');
-            } else {
-                devBtn.classList.remove('bg-white', 'shadow', 'text-indigo-600');
-                devBtn.classList.add('text-slate-500', 'hover:bg-white/50');
-                
-                userBtn.classList.remove('text-slate-500', 'hover:bg-white/50');
-                userBtn.classList.add('bg-white', 'shadow', 'text-slate-700');
-            }
-
-            render();
-        }
-
-        function inspect(apiKey) {
-            const data = apiSpecs[apiKey];
-            const inspector = document.getElementById('inspector');
-            const methodEl = document.getElementById('inspector-method');
-            const descEl = document.getElementById('inspector-desc');
-            const reqEl = document.getElementById('inspector-req');
-            const resEl = document.getElementById('inspector-res');
-
-            // Format Method Color
-            let methodColor = 'text-blue-400';
-            if (data.method === 'POST') methodColor = 'text-green-400';
-            if (data.method === 'DELETE') methodColor = 'text-red-400';
-
-            methodEl.innerHTML = `<span class="${methodColor} font-bold">${data.method}</span> ${data.endpoint}`;
-            descEl.innerText = data.description;
-            
-            // Pretty Print JSON
-            reqEl.innerHTML = syntaxHighlight(data.request || { note: "No body required" });
-            resEl.innerHTML = syntaxHighlight(data.response);
-
-            // Open Drawer
-            inspector.classList.remove('translate-x-full');
-        }
-
-        function closeInspector() {
-            document.getElementById('inspector').classList.add('translate-x-full');
-        }
-
-        // Helper to colorize JSON
-        function syntaxHighlight(json) {
-            if (typeof json != 'string') {
-                json = JSON.stringify(json, undefined, 2);
-            }
-            json = json.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-            return json.replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g, function (match) {
-                var cls = 'json-number';
-                if (/^"/.test(match)) {
-                    if (/:$/.test(match)) {
-                        cls = 'json-key';
-                    } else {
-                        cls = 'json-string';
-                    }
-                } else if (/true|false/.test(match)) {
-                    cls = 'json-boolean';
-                } else if (/null/.test(match)) {
-                    cls = 'json-null';
-                }
-                return '<span class="' + cls + '">' + match + '</span>';
-            });
-        }
-
-        // --- INIT ---
-        window.onload = () => {
-            render();
-        };
-
-    </script>
-</body>
-</html>
+</body></html>

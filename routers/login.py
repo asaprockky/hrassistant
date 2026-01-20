@@ -83,8 +83,6 @@ def get_current_user(request: Request, db: Session = Depends(get_db)):
         # Handle expired or tampered tokens
         raise credentials_exception
 
-    # 5. Fetch the user from the DB using the UUID object
-    # This comparison now works: UUID Column == Python UUID Object
     user = db.query(User).filter(User.id == user_id_uuid).first() 
     
     if user is None:

@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends
 from database.database import get_db
 from schemas.user_schema import UserProfileOut
 from sqlalchemy.orm import Session
-from database.models import User
+from database.models import User, TestSession
 from routers.login import get_current_user
 router = APIRouter()
 
@@ -24,3 +24,23 @@ def user_profile(user: User = Depends(get_current_user), db: Session = Depends(g
         email=user_data.email
     )
 
+@router.get("/users/activity")
+def user_activity(
+    user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    activities = (
+        db.query(TestSession)
+        .filter(TestSession.user_id == user.id)
+        .all()
+    )
+
+    return [
+        {
+            "startDate": a.started_time,
+            "overalPoints": a.overall_points,
+            'isFinished': a.is_finished,
+            "reportsUrl": 'url'
+        }
+        for a in activities
+    ]

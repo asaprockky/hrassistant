@@ -261,7 +261,7 @@ def get_assigned_tests(
     db: Session = Depends(get_db), 
     current_user = Depends(get_current_user)
 ):
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
     
     # Updated Query: Join Practice with Assignment
     # We filter out any practice that already has a TestSession entry
