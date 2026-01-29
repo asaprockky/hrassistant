@@ -4,14 +4,16 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import func, or_, and_
+from sqlalchemy import Integer, func, or_, and_
 
 # --- Imports (Ensure these match your project structure) ---
 from database.database import get_db
 from database.models import Practice, PracticeAssignment, Question, TestSession, UserAnswer
 from routers.login import get_current_user
 from schemas.user_schema import TestStatusResponse, AnswerCreate
-from pydantic import BaseModel # Needed if you define models inline, but better to use schemas file
+from pydantic import BaseModel
+
+from utils.ai_logic import calculate_difficulty_score # Needed if you define models inline, but better to use schemas file
 
 router = APIRouter()
 
@@ -136,8 +138,6 @@ def get_next_question(
         "category": next_question.category,
         "points": next_question.points
     }
-
-
 @router.post("/testing/submit-answer/{session_id}")
 def submit_answer(
     session_id: uuid.UUID,
@@ -176,14 +176,12 @@ def submit_answer(
     practice = db.query(Practice).filter(Practice.practice_id == session.practice_id).first()
     total_weight = 0
     if practice.question_ids:
-        # Sum points of all questions in this practice
         total_weight = db.query(func.sum(Question.points))\
             .filter(Question.id.in_(practice.question_ids))\
-            .scalar() or 1  # Avoid division by zero
+            .scalar() or 1 
 
     is_correct = str(question.correct_answer) == str(answer_data.user_answer)
     
-    # Calculate normalized points (If correct, give portion of 100)
     points_awarded = 0.0
     if is_correct:
         points_awarded = (question.points / total_weight) * 100
@@ -195,17 +193,41 @@ def submit_answer(
         question_id=question.id,
         user_answer=str(answer_data.user_answer),
         is_correct=is_correct,
-        points_awarded=points_awarded
+        points_awarded=points_awarded,
+        time_spent=answer_data.time_spent  # Storing time from frontend
     )
     db.add(user_answer_entry)
     
+    # CRITICAL: Flush pushing this answer to DB memory so 'stats' query below includes it
+    db.flush() 
+
     # 6. Update Session Score
     session.overall_points += points_awarded
-    db.commit()
     
+    # --- AI DIFFICULTY UPDATE START ---
+    
+    # A. Aggregate performance for THIS question across ALL users
+    stats = db.query(
+        func.count(UserAnswer.id).label("total"),
+        func.sum(func.cast(UserAnswer.is_correct == False, Integer)).label("failures"),
+        func.avg(UserAnswer.time_spent).label("avg_time")
+    ).filter(UserAnswer.question_id == question.id).first()
+
+    if stats.total > 0:
+        # B. Calculate inputs for Perceptron
+        f_rate = (stats.failures or 0) / stats.total
+        t_factor = float(stats.avg_time or 0) # Get average seconds
+        
+        # C. Predict new difficulty using Sigmoid function
+        new_difficulty = calculate_difficulty_score(f_rate, t_factor)
+        
+        # D. Update the Question model
+        question.difficulty_level = new_difficulty
+    
+    # --- AI DIFFICULTY UPDATE END ---
+
     # 7. Check if Test is Finished
     is_finished = False
-# Inside your submit_answer function, near the bottom:
     if practice and practice.question_ids:
         answered_count = db.query(UserAnswer).filter(UserAnswer.session_id == session.session_id).count()
         
@@ -221,14 +243,17 @@ def submit_answer(
             if assignment:
                 assignment.is_completed = True
                 assignment.completed_at = datetime.utcnow()
-            
-            db.commit()
+    
+    # 8. Commit Everything
+    db.commit()
+
     return {
         "message": "Answer submitted",
         "is_correct": is_correct,
         "correct_answer": str(question.correct_answer), 
         "points_awarded": round(points_awarded, 2),
-        "is_test_finished": is_finished
+        "is_test_finished": is_finished,
+        "new_difficulty": question.difficulty_level # Optional: Return this so you can see it working!
     }
 
 

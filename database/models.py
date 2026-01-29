@@ -101,7 +101,7 @@ class Question(Base):
     # CHANGE 2: This will now store a LIST of objects, not a dictionary
     options = Column(JSON, nullable=False) 
     
-    difficulty_level = Column(Integer, nullable=False)
+    difficulty_level = Column(Float, default=0.5)
     category = Column(String(50))
     points = Column(Float, default=1.0)
 class Practice(Base):
@@ -162,3 +162,4 @@ class UserAnswer(Base):
     user_answer = Column(String)
     is_correct = Column(Boolean)
     points_awarded = Column(Float)
+    time_spent = Column(Float, nullable=True)

@@ -84,6 +84,7 @@ class VacancyResponse(BaseModel):
 class AnswerCreate(BaseModel):
     question_id: uuid.UUID
     user_answer: str  # This receives the Option ID (UUID string)
+    time_spent: float
 
 class TestStatusResponse(BaseModel):
     message: str
