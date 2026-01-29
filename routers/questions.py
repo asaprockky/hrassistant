@@ -223,6 +223,7 @@ def submit_answer(
         
         # D. Update the Question model
         question.difficulty_level = new_difficulty
+        
     
     # --- AI DIFFICULTY UPDATE END ---
 
