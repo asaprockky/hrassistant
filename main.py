@@ -20,7 +20,8 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",
         "http://localhost:5173",
-        "https://hr-assistant-j2u1.vercel.app"
+        "https://hr-assistant-j2u1.vercel.app",
+        "https://ai-talent-flow.vercel.app"
     ],
     allow_credentials=True,
     allow_methods=["*"],
