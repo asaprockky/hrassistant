@@ -90,6 +90,23 @@ class Candidate(Base):
 #### TESTING PART
 
 # --- Question Model ---
+# Add this to your models file
+class QuestionHistory(Base):
+    __tablename__ = "question_history"
+    
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    question_id = Column(UUID(as_uuid=True), ForeignKey("user_questions.id"), nullable=False)
+    
+    # Store what changed
+    old_difficulty = Column(Float)
+    new_difficulty = Column(Float)
+    change_reason = Column(String) # e.g., "AI recalibration" or "Admin manual update"
+    
+    changed_at = Column(DateTime, server_default=func.now())
+    changed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+
+    question = relationship("Question", back_populates="history")
+
 class Question(Base):
     __tablename__ = "user_questions"
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -100,7 +117,7 @@ class Question(Base):
     
     # CHANGE 2: This will now store a LIST of objects, not a dictionary
     options = Column(JSON, nullable=False) 
-    
+    history = relationship("QuestionHistory", back_populates="question", cascade="all, delete-orphan")
     difficulty_level = Column(Float, default=0.5)
     category = Column(String(50))
     points = Column(Float, default=1.0)

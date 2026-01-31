@@ -11,7 +11,7 @@ def calculate_difficulty_score(failure_rate: float, time_spent: float) -> float:
     """
     Perceptron Logic:
     Calculates difficulty based on failure rate (w=0.8) and time pressure (w=0.2).
-    """
+    """ 
     # 1. Weights and Bias (The 'Knowledge' of the neuron)
     w1 = 0.8  # Failure rate is the strongest indicator
     w2 = 0.2  # Time spent is a secondary indicator
