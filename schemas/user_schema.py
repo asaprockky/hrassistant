@@ -1,89 +1,97 @@
 from datetime import date, datetime
-
 from typing import List, Optional
 import uuid
+
+from pydantic import BaseModel, EmailStr, ConfigDict
 from database.enums import Role
-from pydantic import BaseModel, Field, EmailStr
 
+# --- Base Configuration ---
+# In Pydantic v2, we can use a base class to handle ORM mode for everyone
+class BaseORMModel(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
 
-
-
-class CompanyOut(BaseModel):
-    id: int
+# --- Company Schemas ---
+class CompanyOut(BaseORMModel):
+    id: uuid.UUID  # CHANGED: int -> uuid.UUID
     name: str
-    phone_number: Optional[str]
-    INN: Optional[str]
-    email: Optional[EmailStr]
+    phone_number: Optional[str] = None
+    INN: Optional[str] = None
+    email: Optional[EmailStr] = None
 
-    class Config:
-        # Renamed to from_attributes in Pydantic v2
-        orm_mode = True 
-
-class UserProfileOut(BaseModel):
-    # Assuming UserProfile SQLAlchemy model has these fields
+# --- User & Profile Schemas ---
+class UserProfileOut(BaseORMModel):
     name: str
     surname: str
-    username : str
-    age: int
-    email: Optional[EmailStr]
-
-
-    class Config:
-        orm_mode = True
-
-class UserProfilePageOut(BaseModel):
-    id: int
     username: str
-    role: str
-    company: Optional[CompanyOut] # Pydantic model for the related Company data
-    profile: Optional[UserProfileOut] # Pydantic model for the related Profile data
+    age: int
+    email: Optional[EmailStr] = None
 
-    class Config:
-        orm_mode = True
+class UserProfilePageOut(BaseORMModel):
+    id: uuid.UUID  # CHANGED: int -> uuid.UUID
+    username: str
+    role: Role
+    company: Optional[CompanyOut] = None
+    profile: Optional[UserProfileOut] = None
 
-
-
-        
 class UserCreate(BaseModel):
     username: str
     password: str
     role: Role
-    # Added required profile fields
     name: str
     surname: str
     age: int
-    email: str | None = None
-
-
+    email: Optional[str] = None
 
 class EmailUpdate(BaseModel):
-    email : str
-class UserResponse(BaseModel):
-    id: int
+    email: str
+
+class UserResponse(BaseORMModel):
+    id: uuid.UUID  # CHANGED: int -> uuid.UUID
     username: str
 
-    class Config:
-        orm_mode = True
-
-
-
-
-class VacancyResponse(BaseModel):
-    id: int
+# --- Vacancy Schemas ---
+class VacancyResponse(BaseORMModel):
+    id: uuid.UUID  # CHANGED: int -> uuid.UUID
     job_name: str
     job_description: str
     tag: str
     start_date: date
     end_date: date
-    company_id: int
+    company_id: Optional[uuid.UUID] = None  # CHANGED: int -> uuid.UUID
 
-    class Config:
-        orm_mode = True  # allows SQLAlchemy models to be converted to JSON
+# --- Question & Admin Schemas (NEW) ---
 
-# --- Pydantic Models ---
+class OptionSchema(BaseModel):
+    id: uuid.UUID
+    text: str
+
+class QuestionHistoryOut(BaseORMModel):
+    id: uuid.UUID
+    question_id: uuid.UUID
+    old_difficulty: Optional[float]
+    new_difficulty: Optional[float]
+    change_reason: Optional[str]
+    changed_at: datetime
+    changed_by: Optional[uuid.UUID]
+
+class QuestionOut(BaseORMModel):
+    id: uuid.UUID
+    text: str
+    options: List[OptionSchema]  # Pydantic will parse the JSONB from DB into this list
+    correct_answer: uuid.UUID
+    difficulty_level: float
+    category: Optional[str]
+    points: float
+
+class DifficultyUpdate(BaseModel):
+    new_difficulty: float
+    change_reason: str = "Manual adjustment"
+
+# --- Testing & Assignment Schemas ---
+
 class AnswerCreate(BaseModel):
     question_id: uuid.UUID
-    user_answer: str  # This receives the Option ID (UUID string)
+    user_answer: str  # Stores the Option ID
     time_spent: float
 
 class TestStatusResponse(BaseModel):
@@ -93,18 +101,14 @@ class TestStatusResponse(BaseModel):
     points_awarded: float
     is_test_finished: bool
 
-
-
-
-
 class PracticeCreate(BaseModel):
     title: str
     description: Optional[str] = None
     duration_minutes: int
     deadline: datetime
-    question_ids: List[uuid.UUID]  # The IDs selected by the creator
-    tags: List[str] = [] 
+    question_ids: List[uuid.UUID]
+    tags: List[str] = []
 
 class AssignmentUpdate(BaseModel):
-    add_user_ids: List[uuid.UUID] = []     # Users to assign
-    remove_user_ids: List[uuid.UUID] = []  # Users to de-assign
+    add_user_ids: List[uuid.UUID] = []
+    remove_user_ids: List[uuid.UUID] = []
