@@ -11,7 +11,7 @@ from database.database import get_db
 # ADDED: Role import is needed for the admin check
 from database.models import Practice, PracticeAssignment, Question, User, Role
 from routers.login import get_current_user
-from schemas.user_schema import AssignmentUpdate, PracticeCreate
+from schemas.user_schema import AssignmentListResponse, AssignmentUpdate, PracticeCreate
 
 router = APIRouter()
 
@@ -119,3 +119,35 @@ def manage_assignments(
     db.commit()
     
     return {"message": "Assignments updated", "details": response_data}
+
+
+
+
+
+@router.get("/all-assignments", response_model=List[AssignmentListResponse])
+def get_all_assignments_list(db: Session = Depends(get_db)):
+    """
+    Lists every single assignment record with its ID, User Name, and Test Title.
+    """
+    # Query PracticeAssignment and join User and Practice to get the names
+    results = (
+        db.query(PracticeAssignment, User, Practice)
+        .join(User, PracticeAssignment.user_id == User.id)
+        .join(Practice, PracticeAssignment.practice_id == Practice.practice_id)
+        .all()
+    )
+
+    response_data = []
+
+    for assignment, user, practice in results:
+        data = AssignmentListResponse(
+            assignment_id=assignment.assignment_id,
+            practice_title=practice.title,
+            user_full_name=f"{user.name} {user.surname}",
+            is_completed=assignment.is_completed,
+            assigned_at=assignment.assigned_at,
+            completed_at=assignment.completed_at
+        )
+        response_data.append(data)
+
+    return response_data

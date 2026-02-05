@@ -2,6 +2,8 @@ from datetime import date, datetime
 
 from typing import List, Optional
 import uuid
+
+from sqlalchemy import UUID
 from database.enums import Role
 from pydantic import BaseModel, Field, EmailStr
 
@@ -108,3 +110,14 @@ class PracticeCreate(BaseModel):
 class AssignmentUpdate(BaseModel):
     add_user_ids: List[uuid.UUID] = []     # Users to assign
     remove_user_ids: List[uuid.UUID] = []  # Users to de-assign
+
+class AssignmentListResponse(BaseModel):
+    assignment_id: UUID
+    practice_title: str
+    user_full_name: str
+    is_completed: bool
+    assigned_at: datetime
+    completed_at: Optional[datetime]
+    
+    class Config:
+        from_attributes = True
