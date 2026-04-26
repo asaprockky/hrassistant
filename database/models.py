@@ -70,11 +70,16 @@ class Created_Vacancy(Base):
 
     candidates = relationship("Candidate", back_populates="vacancy")
 
-# --- Candidate Model ---
+    
 class Candidate(Base):
     __tablename__ = "candidates"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    # --- NEW COLUMNS ---
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    status = Column(String(50), default="Applied") # E.g., "Applied", "Testing", "Interview", "Rejected"
+    # -------------------
+    
     full_name = Column(String(100), nullable=False)
     resume_loc = Column(String(255), nullable=False)
     ai_score = Column(Float, default=0.0)
@@ -85,8 +90,7 @@ class Candidate(Base):
 
     vacancy_id = Column(UUID(as_uuid=True), ForeignKey("created_vacancies.id"))
     vacancy = relationship("Created_Vacancy", back_populates="candidates")
-
-
+    user = relationship("User") # Add relationship to User
 #### TESTING PART
 
 # --- Question Model ---

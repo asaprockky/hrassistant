@@ -2,7 +2,34 @@ from datetime import date, datetime
 from typing import List, Optional
 import uuid
 from database.enums import Role
+from pydantic import BaseModel, ConfigDict, EmailStr
 
+
+
+class ApplicationSummary(BaseModel):
+    candidate_id: uuid.UUID
+    vacancy_id: uuid.UUID
+    company_name: str
+    position_title: str
+    status: str
+    ai_fit_score: int # We will pass this as an integer percentage
+    applied_at: str
+
+class PaginatedApplications(BaseModel):
+    items: List[ApplicationSummary]
+    total: int
+    page: int
+    size: int
+    total_pages: int
+
+class PipelineStats(BaseModel):
+    total_jobs_applied: int
+    total_tests_completed: int
+    average_test_score: int
+
+class CandidateDashboardOut(BaseModel):
+    pipeline_overview: PipelineStats
+    recent_applications: List[ApplicationSummary]
 # --- Base Configuration ---
 # In Pydantic v2, we can use a base class to handle ORM mode for everyone
 class BaseORMModel(BaseModel):

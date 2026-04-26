@@ -2,7 +2,7 @@ from fastapi import FastAPI, Depends
 from sqlalchemy.orm import Session
 from database.database import SessionLocal
 from database.models import User
-from routers import email, login, main_page, questions, tester_main, user_profile, admin_panel
+from routers import email, login, main_page, questions, tester_main, user_profile, admin_panel, candidate_dashboard
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
@@ -14,6 +14,7 @@ app.include_router(tester_main.router)
 app.include_router(questions.router)
 app.include_router(user_profile.router)
 app.include_router(admin_panel.router)
+app.include_router(candidate_dashboard.router)
 
 app.add_middleware(
     CORSMiddleware,

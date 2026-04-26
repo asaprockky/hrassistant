@@ -161,13 +161,13 @@ def login(
     # 5. Return Token AND User Profile Data
     # Best practice is to group the profile data inside a "user" dictionary
     return {
-        "access_token": access_token, 
-        "token_type": "bearer", # Standard OAuth2 requirement
-        "user_role": user.role,
+        "access_token": access_token,
         "user": {
+            "userRole": user.id,
             "name": user.name,
             "surname": user.surname,
             "username": user.username,
+            "userRole": user.role,
             "age": user.age,
             "email": user.email
         }
