@@ -17,14 +17,7 @@ from database.models import (
     Role
 )
 from routers.login import get_current_user
-# Added new schemas for Questions and History
-from schemas.user_schema import (
-    AssignmentUpdate, 
-    PracticeCreate, 
-    QuestionOut, 
-    QuestionHistoryOut, 
-    DifficultyUpdate
-)
+from schemas.user_schema import AssignmentUpdate, PracticeCreate
 
 router = APIRouter()
 
@@ -131,83 +124,3 @@ def manage_assignments(
     db.commit()
     
     return {"message": "Assignments updated", "details": response_data}
-
-
-# 4. List All Questions Detailed (Admins Only)
-@router.get("/questions/all", response_model=List[QuestionOut])
-def get_all_questions_detailed(
-    skip: int = 0, 
-    limit: int = 100, 
-    category: Optional[str] = None,
-    db: Session = Depends(get_db),
-    admin_user = Depends(require_admin)
-):
-    """
-    Returns a full list of questions including options and difficulty.
-    """
-    query = db.query(Question)
-    if category:
-        query = query.filter(Question.category == category)
-    
-    return query.offset(skip).limit(limit).all()
-
-
-# 5. Get Question History Log (Admins Only)
-@router.get("/questions/{question_id}/history", response_model=List[QuestionHistoryOut])
-def get_question_history(
-    question_id: uuid.UUID,
-    db: Session = Depends(get_db),
-    admin_user = Depends(require_admin)
-):
-    """
-    Shows the history of difficulty changes/edits for a specific question.
-    """
-    history = db.query(QuestionHistory).filter(
-        QuestionHistory.question_id == question_id
-    ).order_by(QuestionHistory.changed_at.desc()).all()
-    
-    if not history:
-        # Return empty list instead of 404 if no history exists yet
-        return []
-        
-    return history
-
-
-# 6. Manual Difficulty Adjustment (Admins Only)
-@router.patch("/questions/{question_id}/update-difficulty")
-def update_question_difficulty(
-    question_id: uuid.UUID,
-    update_data: DifficultyUpdate,
-    db: Session = Depends(get_db),
-    admin_user = Depends(require_admin)
-):
-    """
-    Updates the difficulty of a question and creates a history log entry.
-    """
-    question = db.query(Question).filter(Question.id == question_id).first()
-    if not question:
-        raise HTTPException(status_code=404, detail="Question not found")
-
-    # Create the history record
-    history_log = QuestionHistory(
-        id=uuid.uuid4(),
-        question_id=question.id,
-        old_difficulty=question.difficulty_level,
-        new_difficulty=update_data.new_difficulty,
-        change_reason=update_data.change_reason,
-        changed_at=datetime.utcnow(),
-        changed_by=admin_user.id
-    )
-
-    # Apply update to the actual Question
-    question.difficulty_level = update_data.new_difficulty
-    
-    db.add(history_log)
-    db.commit()
-    db.refresh(question)
-
-    return {
-        "message": "Difficulty updated successfully",
-        "question_id": question.id,
-        "new_difficulty": question.difficulty_level
-    }

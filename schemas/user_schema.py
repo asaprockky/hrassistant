@@ -1,8 +1,6 @@
 from datetime import date, datetime
 from typing import List, Optional
 import uuid
-
-from pydantic import BaseModel, EmailStr, ConfigDict
 from database.enums import Role
 
 # --- Base Configuration ---
@@ -110,5 +108,5 @@ class PracticeCreate(BaseModel):
     tags: List[str] = []
 
 class AssignmentUpdate(BaseModel):
-    add_user_ids: List[uuid.UUID] = []
-    remove_user_ids: List[uuid.UUID] = []
+    add_user_ids: List[uuid.UUID] = []     # Users to assign
+    remove_user_ids: List[uuid.UUID] = []  # Users to de-assign

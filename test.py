@@ -1,14 +1,15 @@
-from passlib.context import CryptContext
+import google.generativeai as genai
 
-# Initialize the hashing system (same as in your main.py)
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+genai.configure(api_key="AIzaSyCpkmNlA2hK5i4kOT1mNVNFD7Gdr5fw_bI")
 
-# 1. The password you want
-password_to_hash = "1234"
+response = genai.GenerativeModel("gemini-2.5-flash").generate_content("Explain how AI works in a few words")
 
-# 2. Generate the hash
-hashed_password = pwd_context.hash(password_to_hash)
 
-# 3. Print it out so you can copy it
-print(f"Password: {password_to_hash}")
-print(f"Hash to put in DB: {hashed_password}")
+needed_text = 'hello'
+
+def generate_response(needed_text):
+    response = genai.GenerativeModel("gemini-2.5-flash").generate_content(needed_text)
+    print(response.text)
+
+generate_response('hellooewoewofw')
+
