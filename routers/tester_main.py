@@ -76,7 +76,7 @@ def get_active_tests(db: Session = Depends(get_db), user: User = Depends(get_cur
     return tests_summary
 
 
-@router.get("/tests/passed") # Renamed from /tests/passed for better clarity
+@router.get("/tests/completed") 
 def get_test_history(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """
     Retrieves a list of all test sessions assigned to the user (completed or pending).
