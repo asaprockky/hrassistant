@@ -3,6 +3,8 @@ from email.message import EmailMessage
 import random
 import smtplib
 import ssl
+from fastapi import WebSocket, WebSocketException, Query
+
 from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException, Response, status, Request
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
@@ -87,8 +89,36 @@ def get_current_user(request: Request, db: Session = Depends(get_db)):
     
     if user is None:
         raise credentials_exception
-        
+    
     return user
+
+def get_current_user_from_token(token: str, db: Session) -> Optional[User]:
+    """Decodes a JWT and returns the User, or None if invalid."""
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id_str: str = payload.get("user_id")
+        
+        if not user_id_str:
+            return None
+            
+        user_id_uuid = uuid.UUID(user_id_str)
+        return db.query(User).filter(User.id == user_id_uuid).first()
+        
+    except (JWTError, ValueError):
+        # Catches expired tokens, bad signatures, and invalid UUID strings
+        return None
+
+async def get_current_user_ws(
+    websocket: WebSocket, 
+    token: str = Query(...), # Forces the user to provide ?token= in the URL
+    db: Session = Depends(get_db)
+):
+    user = get_current_user_from_token(token, db)
+    if not user:
+        # Close the connection cleanly if authentication fails
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION)
+    return user 
 def get_current_admin(current_user = Depends(get_current_user)):
     # Adjust "Role.ADMIN" to match exactly how you defined it in your Enum
     if current_user.role != Role.ADMIN:
@@ -99,6 +129,7 @@ def get_current_admin(current_user = Depends(get_current_user)):
     return current_user
 
 # Remove 'async' to fix performance blocking
+
 @router.post("/login")
 def login(
     response: Response,
@@ -109,7 +140,6 @@ def login(
     user = db.query(User).filter(User.username == form_data.username).first()
 
     # 2. Verify Password Correctly
-    # We use verify_password(plain, hash) instead of direct comparison
     if not user or not verify_password(form_data.password, user.password):
         raise HTTPException(status_code=400, detail="Invalid username or password")
 
@@ -128,11 +158,22 @@ def login(
         max_age=604800,
     )
 
-    # 5. Return Token (For Mobile/Postman to use in Headers)
+    # 5. Return Token AND User Profile Data
+    # Best practice is to group the profile data inside a "user" dictionary
     return {
         "access_token": access_token, 
-        "user_role" : user.role
+        "token_type": "bearer", # Standard OAuth2 requirement
+        "user_role": user.role,
+        "user": {
+            "name": user.name,
+            "surname": user.surname,
+            "username": user.username,
+            "age": user.age,
+            "email": user.email
+        }
     }
+
+
 
 @router.post("/signup")
 def signup(user_data: UserCreate, response: Response, db: Session = Depends(get_db)):

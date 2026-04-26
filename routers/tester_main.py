@@ -7,6 +7,10 @@ from database.models import User, TestSession, Company
 from routers.login import get_current_user
 import uuid
 
+from fastapi import WebSocket, WebSocketException, status
+# Assuming you have a function that decodes JWTs and returns a user
+from routers.login import get_current_user_from_token
+
 router = APIRouter()
 
 # Helper function to query the Company model for relationships
@@ -14,6 +18,16 @@ def get_company_name(db: Session, company_id: uuid.UUID) -> str:
     """Fetches the company name using its ID."""
     company = db.query(Company.name).filter(Company.id == company_id).first()
     return company[0] if company else "Unknown Company"
+
+
+
+
+async def get_current_user_ws(websocket: WebSocket, token: str):
+    user = get_current_user_from_token(token) # Replace with your actual token decoding logic
+    if not user:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION)
+    return user
 
 @router.get("/tests/active")
 def get_active_tests(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
