@@ -21,8 +21,7 @@ from fastapi import Depends, HTTPException, status, APIRouter
 from routers.login import get_current_user 
 # Assuming User, get_current_user, get_db are defined/imported elsewhere
 
-# Assuming the router object is named 'router'
-router = APIRouter()
+router = APIRouter(prefix="/users/me/email", tags=["Email Verification"])
 
 # --- CONFIGURATION FOR EMAIL SENDING ---
 PORT = 465 # SSL Port
@@ -48,8 +47,8 @@ class EmailVerificationConfirm(BaseModel):
 
 # --- API ENDPOINTS FOR EMAIL VERIFICATION ---
 
-@router.post("/request-email-verification", status_code=status.HTTP_202_ACCEPTED)
-def request_email_verification(
+@router.post("/verification-code", status_code=status.HTTP_202_ACCEPTED)
+def send_email_verification_code(
     request: EmailVerificationRequest,
     User: models.User = Depends(get_current_user),
 ):
@@ -132,8 +131,8 @@ def request_email_verification(
         )
 
 
-@router.post("/confirm-email-verification")
-def confirm_email_verification(
+@router.post("/verification")
+def verify_email_code(
     confirm_data: EmailVerificationConfirm,
     User: models.User = Depends(get_current_user),
     db: Session = Depends(get_db)

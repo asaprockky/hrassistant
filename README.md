@@ -1,97 +1,59 @@
-```markdown
-## 📡 API Routes
+# HR Assistant Routes
 
-### 🔐 POST `/login`
-**Authentication:** Not required  
-**Request:**
-```json
-{
-  "username": "abdulfayiz",
-  "password": "123456"
-}
-```
-**Response:**
-```json
-{
-  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJ1c2VybmFtZSI6IkFiZHVsZmF5aXoiLCJleHAiOjE3NTk2Nzc4OTV9.olrtIYz5f6b00-7ewIJum2AXY1K137IosbmH8nmsMaE",
-  "token_type": "bearer",
-  "user_role": "admin"
-}
-```
+Base URL: `https://api.talentflow.uz`
 
-### 👤 GET `/users` 
-**Authentication:** Required (Bearer Token)  
-**Headers:**
-```
-Authorization: Bearer <your_token>
-```
-**Response:**
-```json
-[
-  {
-    "id": 1,
-    "password": "hashedpassword",
-    "username": "Abdulfayiz",
-    "role": "admin",
-    "company_id": 1
-  }
-]
-```
+## 1. Health
 
----
+| Method | URL |
+| --- | --- |
+| GET | `/health/ping` |
 
+## 2. Authentication
 
-### 🔐 POST `/create_job/vacancies/create`
-**Authentication:** Not required  
-**Request:**
-```json
-{
-  "id": 2,
-  "company_id": 1,
-  "job_name": "Frontend Developer",
-  "job_description": "Develop responsive web interfaces using React and Tailwind CSS.",
-  "tag": "React",
-  "start_date": "2025-10-10",
-  "end_date": "2025-11-10"
-}
+| Method | URL |
+| --- | --- |
+| POST | `/auth/login` |
+| POST | `/auth/register` |
 
+## 3. Users
 
-```
-**Response:**
- content-length: 203 
- content-type: application/json 
- date: Tue,07 Oct 2025 06:40:53 GMT 
- server: uvicorn 
-```
+| Method | URL |
+| --- | --- |
+| GET | `/users` |
+| GET | `/users/me` |
+| GET | `/users/me/activity` |
+| POST | `/users/me/email/verification-code` |
+| POST | `/users/me/email/verification` |
 
-```
+## 4. Vacancies
 
-### 👤 GET `/create_job/vacancies` 
-**Authentication:** Required (Bearer Token)  
-**Headers:**
-```
-Authorization: Bearer <your_token>
-```
-**Response:**
-```json
-[
-  {
-    "id": 1,
-    "job_name": "Backend Developer",
-    "job_description": "Responsible for building REST APIs using FastAPI and PostgreSQL.",
-    "tag": "Python",
-    "start_date": "2025-10-07",
-    "end_date": "2025-11-07",
-    "company_id": 1
-  },
-  {
-    "id": 2,
-    "job_name": "Frontend Developer",
-    "job_description": "Develop responsive web interfaces using React and Tailwind CSS.",
-    "tag": "React",
-    "start_date": "2025-10-10",
-    "end_date": "2025-11-10",
-    "company_id": 1
-  }
-]
-```
+| Method | URL |
+| --- | --- |
+| GET | `/vacancies` |
+| POST | `/vacancies` |
+| POST | `/vacancies/resume-uploads` |
+
+## 5. Candidate Dashboard
+
+| Method | URL |
+| --- | --- |
+| GET | `/candidate/dashboard/pipeline` |
+| GET | `/candidate/dashboard/applications/recent` |
+
+## 6. Admin
+
+| Method | URL |
+| --- | --- |
+| GET | `/admin/questions` |
+| POST | `/admin/practices` |
+| PATCH | `/admin/practices/{practice_id}/assignments` |
+
+## 7. Testing
+
+| Method | URL |
+| --- | --- |
+| WS | `/testing/practices/{practice_id}/ws` |
+| GET | `/testing/practices/{practice_id}/result` |
+| GET | `/testing/assignments/{filter_option}` |
+| GET | `/testing/sessions/active` |
+| GET | `/testing/sessions/completed` |

@@ -21,9 +21,10 @@ import uuid
 from database.models import Role
 from schemas.user_schema import UserCreate, EmailUpdate
 from auth.jwt_handler import SECRET_KEY, ALGORITHM
-router = APIRouter(prefix="/users")
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/users/login")
+router = APIRouter(prefix="/auth", tags=["Authentication"])
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 
@@ -175,8 +176,8 @@ def login(
 
 
 
-@router.post("/signup")
-def signup(user_data: UserCreate, response: Response, db: Session = Depends(get_db)):
+@router.post("/register")
+def register_user(user_data: UserCreate, response: Response, db: Session = Depends(get_db)):
     existing_user = db.query(User).filter(User.username == user_data.username).first()
     if existing_user:
         raise HTTPException(

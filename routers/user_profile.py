@@ -6,12 +6,12 @@ from schemas.user_schema import UserProfileOut
 from sqlalchemy.orm import Session
 from database.models import User, TestSession
 from routers.login import get_current_user
-router = APIRouter()
+router = APIRouter(prefix="/users/me", tags=["User Profile"])
 
 
 
-@router.get("/users/me", response_model=UserProfileOut)
-def user_profile(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+@router.get("", response_model=UserProfileOut)
+def get_user_profile(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     user_data = db.query(User).filter(User.id == user.id).first()
     if not user_data:
         raise HTTPException(status_code=404, detail="User not found")
@@ -24,8 +24,8 @@ def user_profile(user: User = Depends(get_current_user), db: Session = Depends(g
         email=user_data.email
     )
 
-@router.get("/users/activity")
-def user_activity(
+@router.get("/activity")
+def get_user_activity(
     user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):

@@ -19,7 +19,7 @@ from database.models import (
 from routers.login import get_current_user
 from schemas.user_schema import AssignmentUpdate, PracticeCreate
 
-router = APIRouter()
+router = APIRouter(prefix="/admin", tags=["Admin"])
 
 # --- SECURITY DEPENDENCY ---
 def require_admin(current_user: User = Depends(get_current_user)):
@@ -34,8 +34,8 @@ def require_admin(current_user: User = Depends(get_current_user)):
 # --- ENDPOINTS ---
 
 # 1. Search Questions by Category (Admins Only)
-@router.get("/questions/filter")
-def get_questions_by_tag(
+@router.get("/questions")
+def list_questions(
     category: str, 
     limit: int = 50, 
     db: Session = Depends(get_db),
@@ -48,7 +48,7 @@ def get_questions_by_tag(
 
 
 # 2. Create Practice (Admins Only)
-@router.post("/testing/create-practice")
+@router.post("/practices")
 def create_practice(
     practice_data: PracticeCreate,
     db: Session = Depends(get_db),
@@ -77,7 +77,7 @@ def create_practice(
 
 
 # 3. Manage Assignments (Admins Only)
-@router.patch("/testing/manage-assignments/{practice_id}")
+@router.patch("/practices/{practice_id}/assignments")
 def manage_assignments(
     practice_id: uuid.UUID,
     update_data: AssignmentUpdate,

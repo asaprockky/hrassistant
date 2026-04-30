@@ -9,12 +9,11 @@ from database.models import Created_Vacancy, User, Company
 from fastapi import Depends
 from sqlalchemy.orm import Session
 from PyPDF2 import PdfReader
-router = APIRouter()
+router = APIRouter(prefix="/vacancies", tags=["Vacancies"])
 
-### api for creating vacancies rn works only taking ids from frontend
 
-@router.post("/vacancies/create", response_model= VacancyResponse)
-async def crete_vacancy(data: VacancyResponse, db: Session = Depends(get_data), current_user: User = Depends(get_current_user)):
+@router.post("", response_model=VacancyResponse)
+async def create_vacancy(data: VacancyResponse, db: Session = Depends(get_data), current_user: User = Depends(get_current_user)):
     company = db.query(Company).filter(Company.id == current_user.company_id).first()
     if not company:
         raise HTTPException(status_code=400, detail="Company not found for this user")
@@ -33,10 +32,9 @@ async def crete_vacancy(data: VacancyResponse, db: Session = Depends(get_data), 
     return new_vacancy
 
 
-### api for listing all the vacancies
 
-@router.get("/vacancies", response_model=list[VacancyResponse])
-async def get_vacancies(db: Session = Depends(get_data), current_user: User = Depends(get_current_user)):
+@router.get("", response_model=list[VacancyResponse])
+async def list_vacancies(db: Session = Depends(get_data), current_user: User = Depends(get_current_user)):
     company = db.query(Company).filter(Company.id == current_user.company_id).first()
     if not company:
         raise HTTPException(status_code=400, detail="Company not found for this user")
@@ -44,8 +42,8 @@ async def get_vacancies(db: Session = Depends(get_data), current_user: User = De
     return vacancies
 
     
-@router.post("/vacancies/upload_resumes")
-async def upload_resumes(file: UploadFile = File(...)):
+@router.post("/resume-uploads")
+async def upload_resume(file: UploadFile = File(...)):
     UPLOAD_DIR = ''
     db: Session = SessionLocal()
     try:
