@@ -13,7 +13,7 @@ from routers.login import get_current_user, get_current_user_from_token # Assume
 from schemas.user_schema import TestStatusResponse, AnswerCreate
 from utils.ai_logic import calculate_difficulty_score
 
-router = APIRouter(prefix="/api/v1/testing", tags=["Testing"])
+router = APIRouter(prefix="/testing", tags=["Testing"])
 
 # --- WebSocket Auth Dependency ---
 async def get_current_user_ws(

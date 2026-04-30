@@ -19,7 +19,7 @@ from database.models import (
 from routers.login import get_current_user
 from schemas.user_schema import AssignmentUpdate, PracticeCreate
 
-router = APIRouter(prefix="/api/v1/admin", tags=["Admin"])
+router = APIRouter(prefix="/admin", tags=["Admin"])
 
 # --- SECURITY DEPENDENCY ---
 def require_admin(current_user: User = Depends(get_current_user)):

@@ -11,7 +11,7 @@ from fastapi import WebSocket, WebSocketException, status
 # Assuming you have a function that decodes JWTs and returns a user
 from routers.login import get_current_user_from_token
 
-router = APIRouter(prefix="/api/v1/testing/sessions", tags=["Test Sessions"])
+router = APIRouter(prefix="/testing/sessions", tags=["Test Sessions"])
 
 # Helper function to query the Company model for relationships
 def get_company_name(db: Session, company_id: uuid.UUID) -> str:

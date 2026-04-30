@@ -9,7 +9,7 @@ from database.models import Created_Vacancy, User, Company
 from fastapi import Depends
 from sqlalchemy.orm import Session
 from PyPDF2 import PdfReader
-router = APIRouter(prefix="/api/v1/vacancies", tags=["Vacancies"])
+router = APIRouter(prefix="/vacancies", tags=["Vacancies"])
 
 
 @router.post("", response_model=VacancyResponse)

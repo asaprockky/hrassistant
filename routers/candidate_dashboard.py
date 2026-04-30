@@ -11,7 +11,7 @@ from routers.login import get_current_user
 # Import the individual schemas instead of the combined one
 from schemas.user_schema import PaginatedApplications, PipelineStats, ApplicationSummary 
 
-router = APIRouter(prefix="/api/v1/candidate/dashboard", tags=["Candidate Dashboard"])
+router = APIRouter(prefix="/candidate/dashboard", tags=["Candidate Dashboard"])
 
 # ==========================================
 # 1. Pipeline Overview API
@@ -59,7 +59,7 @@ def get_recent_applications(
 ):
     """
     Fetches job applications for the candidate with pagination.
-    Example: /api/v1/candidate/dashboard/applications/recent?page=2&size=5
+    Example: /candidate/dashboard/applications/recent?page=2&size=5
     """
     user_id = current_user.id
     now_utc = datetime.now(timezone.utc).replace(tzinfo=None)

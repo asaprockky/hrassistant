@@ -21,7 +21,7 @@ from fastapi import Depends, HTTPException, status, APIRouter
 from routers.login import get_current_user 
 # Assuming User, get_current_user, get_db are defined/imported elsewhere
 
-router = APIRouter(prefix="/api/v1/users/me/email", tags=["Email Verification"])
+router = APIRouter(prefix="/users/me/email", tags=["Email Verification"])
 
 # --- CONFIGURATION FOR EMAIL SENDING ---
 PORT = 465 # SSL Port

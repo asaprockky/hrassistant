@@ -15,12 +15,25 @@ from routers import (
     user_profile,
 )
 
-app = FastAPI(title="HR Assistant API", version="1.0.0")
+API_TAGS = [
+    {"name": "Health"},
+    {"name": "Authentication"},
+    {"name": "Users"},
+    {"name": "User Profile"},
+    {"name": "Email Verification"},
+    {"name": "Vacancies"},
+    {"name": "Candidate Dashboard"},
+    {"name": "Admin"},
+    {"name": "Testing"},
+    {"name": "Test Sessions"},
+    {"name": "Resumes"},
+]
 
-# API routers are grouped by domain. Each router owns its /api/v1 prefix.
+app = FastAPI(title="HR Assistant API", version="1.0.0", openapi_tags=API_TAGS)
+
 app.include_router(login.router)
-app.include_router(email.router)
 app.include_router(user_profile.router)
+app.include_router(email.router)
 app.include_router(main_page.router)
 app.include_router(candidate_dashboard.router)
 app.include_router(admin_panel.router)
@@ -47,10 +60,10 @@ def get_data():
     finally:
         db.close()
 
-@app.get("/api/v1/users", tags=["Users"])
+@app.get("/users", tags=["Users"])
 def list_users(db: Session = Depends(get_data)):
     return db.query(User).all()
 
-@app.get("/api/v1/health/ping", tags=["Health"])
+@app.get("/health/ping", tags=["Health"])
 def ping():
     return {"message": "pong"}

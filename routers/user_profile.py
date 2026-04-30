@@ -6,7 +6,7 @@ from schemas.user_schema import UserProfileOut
 from sqlalchemy.orm import Session
 from database.models import User, TestSession
 from routers.login import get_current_user
-router = APIRouter(prefix="/api/v1/users/me", tags=["User Profile"])
+router = APIRouter(prefix="/users/me", tags=["User Profile"])
 
 
 
