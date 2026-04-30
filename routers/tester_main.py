@@ -11,7 +11,7 @@ from fastapi import WebSocket, WebSocketException, status
 # Assuming you have a function that decodes JWTs and returns a user
 from routers.login import get_current_user_from_token
 
-router = APIRouter()
+router = APIRouter(prefix="/api/v1/testing/sessions", tags=["Test Sessions"])
 
 # Helper function to query the Company model for relationships
 def get_company_name(db: Session, company_id: uuid.UUID) -> str:
@@ -29,7 +29,7 @@ async def get_current_user_ws(websocket: WebSocket, token: str):
         raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION)
     return user
 
-@router.get("/tests/active")
+@router.get("/active")
 def get_active_tests(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """
     Retrieves a list of tests assigned to the user that are currently active (not finished).
@@ -76,7 +76,7 @@ def get_active_tests(db: Session = Depends(get_db), user: User = Depends(get_cur
     return tests_summary
 
 
-@router.get("/tests/completed") 
+@router.get("/completed")
 def get_test_history(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     """
     Retrieves a list of all test sessions assigned to the user (completed or pending).

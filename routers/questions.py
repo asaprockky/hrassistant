@@ -13,7 +13,7 @@ from routers.login import get_current_user, get_current_user_from_token # Assume
 from schemas.user_schema import TestStatusResponse, AnswerCreate
 from utils.ai_logic import calculate_difficulty_score
 
-router = APIRouter()
+router = APIRouter(prefix="/api/v1/testing", tags=["Testing"])
 
 # --- WebSocket Auth Dependency ---
 async def get_current_user_ws(
@@ -59,7 +59,7 @@ async def handle_finish_test(session_id: uuid.UUID, user_id: uuid.UUID, practice
 # 1. LIVE TESTING WEBSOCKET (The Core Loop)
 # ==========================================
 
-@router.websocket("/ws/testing/{practice_id}")
+@router.websocket("/practices/{practice_id}/ws")
 async def testing_websocket(
     websocket: WebSocket, 
     practice_id: uuid.UUID, 
@@ -255,7 +255,7 @@ async def testing_websocket(
 # 2. DASHBOARD / DATA REST API ENDPOINTS
 # ==========================================
 
-@router.get("/testing/result/{practice_id}")
+@router.get("/practices/{practice_id}/result")
 def get_test_result(
     practice_id: uuid.UUID,
     db: Session = Depends(get_db),
@@ -278,7 +278,7 @@ def get_test_result(
         "started_at": session.started_time
     }
 
-@router.get("/testing/assigned/{filter_option}")
+@router.get("/assignments/{filter_option}")
 def get_assigned_tests(
     filter_option: str, 
     db: Session = Depends(get_db), 

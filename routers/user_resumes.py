@@ -4,5 +4,5 @@ from schemas.user_schema import VacancyResponse
 from database.models import Created_Vacancy, User, Company
 from fastapi import Depends
 from sqlalchemy.orm import Session
-router = APIRouter()
+router = APIRouter(prefix="/api/v1/resumes", tags=["Resumes"])
 

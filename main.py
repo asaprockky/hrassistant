@@ -1,20 +1,31 @@
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, Depends
 from sqlalchemy.orm import Session
+
 from database.database import SessionLocal
 from database.models import User
-from routers import email, login, main_page, questions, tester_main, user_profile, admin_panel, candidate_dashboard
-from fastapi.middleware.cors import CORSMiddleware
+from routers import (
+    admin_panel,
+    candidate_dashboard,
+    email,
+    login,
+    main_page,
+    questions,
+    tester_main,
+    user_profile,
+)
 
-app = FastAPI()
+app = FastAPI(title="HR Assistant API", version="1.0.0")
 
+# API routers are grouped by domain. Each router owns its /api/v1 prefix.
 app.include_router(login.router)
-app.include_router(main_page.router)
 app.include_router(email.router)
-app.include_router(tester_main.router)
-app.include_router(questions.router)
 app.include_router(user_profile.router)
-app.include_router(admin_panel.router)
+app.include_router(main_page.router)
 app.include_router(candidate_dashboard.router)
+app.include_router(admin_panel.router)
+app.include_router(questions.router)
+app.include_router(tester_main.router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -36,10 +47,10 @@ def get_data():
     finally:
         db.close()
 
-@app.get("/users")
-def users(db: Session = Depends(get_data)):
+@app.get("/api/v1/users", tags=["Users"])
+def list_users(db: Session = Depends(get_data)):
     return db.query(User).all()
 
-@app.get("/ping")
+@app.get("/api/v1/health/ping", tags=["Health"])
 def ping():
     return {"message": "pong"}

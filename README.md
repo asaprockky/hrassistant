@@ -1,97 +1,59 @@
-```markdown
-## 📡 API Routes
+# HR Assistant API
 
-### 🔐 POST `/login`
-**Authentication:** Not required  
-**Request:**
-```json
-{
-  "username": "abdulfayiz",
-  "password": "123456"
-}
-```
-**Response:**
-```json
-{
-  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoxLCJ1c2VybmFtZSI6IkFiZHVsZmF5aXoiLCJleHAiOjE3NTk2Nzc4OTV9.olrtIYz5f6b00-7ewIJum2AXY1K137IosbmH8nmsMaE",
-  "token_type": "bearer",
-  "user_role": "admin"
-}
-```
+Base URL: `/api/v1`
 
-### 👤 GET `/users` 
-**Authentication:** Required (Bearer Token)  
-**Headers:**
-```
-Authorization: Bearer <your_token>
-```
-**Response:**
-```json
-[
-  {
-    "id": 1,
-    "password": "hashedpassword",
-    "username": "Abdulfayiz",
-    "role": "admin",
-    "company_id": 1
-  }
-]
-```
+## Health
 
----
+| Method | URL | Description |
+| --- | --- | --- |
+| GET | `/health/ping` | Check API availability. |
 
+## Authentication
 
-### 🔐 POST `/create_job/vacancies/create`
-**Authentication:** Not required  
-**Request:**
-```json
-{
-  "id": 2,
-  "company_id": 1,
-  "job_name": "Frontend Developer",
-  "job_description": "Develop responsive web interfaces using React and Tailwind CSS.",
-  "tag": "React",
-  "start_date": "2025-10-10",
-  "end_date": "2025-11-10"
-}
+| Method | URL | Description |
+| --- | --- | --- |
+| POST | `/auth/login` | Sign in and receive an access token. |
+| POST | `/auth/register` | Create a user account. |
 
+## Users
 
-```
-**Response:**
- content-length: 203 
- content-type: application/json 
- date: Tue,07 Oct 2025 06:40:53 GMT 
- server: uvicorn 
-```
+| Method | URL | Description |
+| --- | --- | --- |
+| GET | `/users` | List users. |
+| GET | `/users/me` | Get the authenticated user's profile. |
+| GET | `/users/me/activity` | Get the authenticated user's test activity. |
+| POST | `/users/me/email/verification-code` | Send an email verification code. |
+| POST | `/users/me/email/verification` | Confirm the email verification code. |
 
-```
+## Vacancies
 
-### 👤 GET `/create_job/vacancies` 
-**Authentication:** Required (Bearer Token)  
-**Headers:**
-```
-Authorization: Bearer <your_token>
-```
-**Response:**
-```json
-[
-  {
-    "id": 1,
-    "job_name": "Backend Developer",
-    "job_description": "Responsible for building REST APIs using FastAPI and PostgreSQL.",
-    "tag": "Python",
-    "start_date": "2025-10-07",
-    "end_date": "2025-11-07",
-    "company_id": 1
-  },
-  {
-    "id": 2,
-    "job_name": "Frontend Developer",
-    "job_description": "Develop responsive web interfaces using React and Tailwind CSS.",
-    "tag": "React",
-    "start_date": "2025-10-10",
-    "end_date": "2025-11-10",
-    "company_id": 1
-  }
-]
-```
+| Method | URL | Description |
+| --- | --- | --- |
+| GET | `/vacancies` | List vacancies for the authenticated user's company. |
+| POST | `/vacancies` | Create a vacancy for the authenticated user's company. |
+| POST | `/vacancies/resume-uploads` | Upload and process a resume PDF. |
+
+## Candidate Dashboard
+
+| Method | URL | Description |
+| --- | --- | --- |
+| GET | `/candidate/dashboard/pipeline` | Get candidate pipeline statistics. |
+| GET | `/candidate/dashboard/applications/recent` | Get paginated recent applications. |
+
+## Admin
+
+| Method | URL | Description |
+| --- | --- | --- |
+| GET | `/admin/questions` | Filter questions by category. |
+| POST | `/admin/practices` | Create a practice assessment. |
+| PATCH | `/admin/practices/{practice_id}/assignments` | Add or remove users from a practice. |
+
+## Testing
+
+| Method | URL | Description |
+| --- | --- | --- |
+| WS | `/testing/practices/{practice_id}/ws` | Live testing WebSocket. |
+| GET | `/testing/practices/{practice_id}/result` | Get the authenticated user's result for a practice. |
+| GET | `/testing/assignments/{filter_option}` | Get assigned practices by filter (`latest`, `all`, or a numeric limit). |
+| GET | `/testing/sessions/active` | List active test sessions. |
+| GET | `/testing/sessions/completed` | List completed test sessions. |
