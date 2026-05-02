@@ -1,106 +1,162 @@
-from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException
-from database.database import get_db
-from sqlalchemy.orm import Session
-# IMPORT CORRECTION: Replace StartedTest with the new TestSession model
-from database.models import User, TestSession, Company 
-from routers.login import get_current_user
+import math
 import uuid
+from datetime import datetime
+from typing import List, Optional
+from pydantic import BaseModel
 
-from fastapi import WebSocket, WebSocketException, status
-# Assuming you have a function that decodes JWTs and returns a user
-from routers.login import get_current_user_from_token
+from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketException, status
+from sqlalchemy.orm import Session
+
+# Import your database and models
+from database.database import get_db
+from database.models import User, TestSession, Company 
+from routers.login import get_current_user, get_current_user_from_token
+from schemas.user_schema import PaginatedActiveTests, PaginatedAllTests, PaginatedCompletedTests
 
 router = APIRouter(prefix="/testing/sessions", tags=["Test Sessions"])
 
-# Helper function to query the Company model for relationships
+# ==========================================
+# 2. HELPER FUNCTIONS & DEPENDENCIES
+# ==========================================
+
 def get_company_name(db: Session, company_id: uuid.UUID) -> str:
     """Fetches the company name using its ID."""
     company = db.query(Company.name).filter(Company.id == company_id).first()
     return company[0] if company else "Unknown Company"
 
-
-
-
 async def get_current_user_ws(websocket: WebSocket, token: str):
-    user = get_current_user_from_token(token) # Replace with your actual token decoding logic
+    """Dependency for WebSocket connections."""
+    user = get_current_user_from_token(token)
     if not user:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION)
     return user
 
-@router.get("/active")
-def get_active_tests(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    """
-    Retrieves a list of tests assigned to the user that are currently active (not finished).
-    """
-    
-    # 1. QUERY CORRECTION: Use TestSession instead of StartedTest
-    active_tests = db.query(TestSession).filter(
-        TestSession.user_id == user.id,
-        TestSession.is_finished == False, # Use the correct column for "active" state
-        # The deadline check (optional but recommended): 
-        # For simplicity, we assume 'is_finished' handles test state
-    ).all()
-    
-    if not active_tests:
-        return {"message": "No active test found. Please check your history for pending or completed tests."}
+# ==========================================
+# 3. ENDPOINTS
+# ==========================================
 
-    # 2. MAPPING CORRECTION: Map to the TestSession and related Practice model attributes
+@router.get("/active", response_model=PaginatedActiveTests)
+def get_active_tests(
+    page: int = Query(1, ge=1, description="Page number"),
+    size: int = Query(10, ge=1, le=100, description="Number of items per page"),
+    db: Session = Depends(get_db), 
+    user: User = Depends(get_current_user)
+):
+    """Retrieves a paginated list of active tests assigned to the user."""
+    
+    base_query = db.query(TestSession).filter(
+        TestSession.user_id == user.id,
+        TestSession.is_finished == False
+    ).order_by(TestSession.started_time.desc())
+    
+    total_items = base_query.count()
+    offset = (page - 1) * size
+    active_tests = base_query.offset(offset).limit(size).all()
+    
     tests_summary = []
     for t in active_tests:
-        # Assuming Practice model has the 'title' field which you want to display
-        # Note: If you want 'created_by' (Company name), you'll need to join or fetch it. 
-        # I'll fetch it using the Practice's associated Company (which you haven't modeled yet).
-        
-        # *** Since the company relationship isn't directly on TestSession, we use a helper/join ***
-        
-        # For simplicity and correctness with your current model structure, we'll fetch the Company name 
-        # using the User's Company ID, assuming the test is 'assigned' by the User's company (Recruiter).
-        # A more robust solution involves a direct relationship from Practice/TestSession to Company.
-        
         company_name = get_company_name(db, t.user.company_id) if t.user.company_id else "Unassigned Test"
-        
         tests_summary.append({
-            # The primary key column is session_id in TestSession
-            "test_id": t.session_id, 
-            "test_title": t.practice.title, # Assuming practice relationship is correctly configured
+            "test_id": str(t.session_id), 
+            "test_title": t.practice.title, 
             "created_by": company_name, 
             "created_at": t.started_time, 
-            # Note: TestSession doesn't have its own deadline; it uses Practice.deadline
             "deadline": t.practice.deadline, 
-            # The score column is overall_points in TestSession
             "final_score": t.overall_points 
         })
     
-    return tests_summary
+    return {
+        "items": tests_summary,
+        "total": total_items,
+        "page": page,
+        "size": size,
+        "total_pages": math.ceil(total_items / size) if total_items > 0 else 0
+    }
 
 
-@router.get("/completed")
-def get_test_history(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
-    """
-    Retrieves a list of all test sessions assigned to the user (completed or pending).
-    """
+@router.get("/completed", response_model=PaginatedCompletedTests)
+def get_test_history(
+    page: int = Query(1, ge=1, description="Page number"),
+    size: int = Query(10, ge=1, le=100, description="Number of items per page"),
+    db: Session = Depends(get_db), 
+    user: User = Depends(get_current_user)
+):
+    """Retrieves a paginated list of finished test sessions assigned to the user."""
     
-    # 1. QUERY CORRECTION: Use TestSession instead of StartedTest
-    all_sessions = db.query(TestSession).filter(
-        TestSession.user_id == user.id, TestSession.is_finished == True
-    ).order_by(TestSession.started_time.desc()).all() # Use started_time for ordering
+    base_query = db.query(TestSession).filter(
+        TestSession.user_id == user.id, 
+        TestSession.is_finished == True
+    ).order_by(TestSession.started_time.desc())
 
-    if not all_sessions:
-        return {"message": "The user hasn't finished any test"}
+    total_items = base_query.count()
+    offset = (page - 1) * size
+    all_sessions = base_query.offset(offset).limit(size).all()
 
-    # 2. MAPPING CORRECTION: Map to the TestSession and related Practice model attributes
     history_summaries = []
     for session in all_sessions: 
-        company_name = get_company_name(db, session.user.company_id) if session.user.company_id else "Unassigned Test"
-
+        score = int(session.overall_points or 0)
         history_summaries.append({
             "test_id": str(session.session_id),
             "assessment_name": session.practice.title,
-            "date": session.started_time.strftime("%b %d, %Y"),
-            "score": int(session.overall_points),
-            "status_label": f"Passed ({int(session.overall_points)}%)" if session.overall_points >= 60 else "Failed",
+            "date": session.started_time.strftime("%b %d, %Y") if session.started_time else None,
+            "score": score,
+            "status_label": f"Passed ({score}%)" if score >= 60 else "Failed",
             "action_url": f"/reports/{session.session_id}"
         })
-    return history_summaries
+        
+    return {
+        "items": history_summaries,
+        "total": total_items,
+        "page": page,
+        "size": size,
+        "total_pages": math.ceil(total_items / size) if total_items > 0 else 0
+    }
+
+
+@router.get("/all", response_model=PaginatedAllTests)
+def get_all_tests(
+    page: int = Query(1, ge=1, description="Page number"),
+    size: int = Query(10, ge=1, le=100, description="Number of items per page"),
+    db: Session = Depends(get_db), 
+    user: User = Depends(get_current_user)
+):
+    """Retrieves a paginated list of ALL test sessions (both active and completed)."""
+    
+    # Notice: No `is_finished` filter here, so we get everything
+    base_query = db.query(TestSession).filter(
+        TestSession.user_id == user.id
+    ).order_by(TestSession.started_time.desc())
+
+    total_items = base_query.count()
+    offset = (page - 1) * size
+    all_sessions = base_query.offset(offset).limit(size).all()
+
+    all_summaries = []
+    for session in all_sessions: 
+        company_name = get_company_name(db, session.user.company_id) if session.user.company_id else "Unassigned Test"
+        score = int(session.overall_points or 0)
+        
+        # Determine human-readable status
+        if session.is_finished:
+            status_text = "Completed"
+        else:
+            status_text = "Active"
+
+        all_summaries.append({
+            "test_id": str(session.session_id),
+            "assessment_name": session.practice.title,
+            "created_by": company_name,
+            "date": session.started_time.strftime("%b %d, %Y") if session.started_time else None,
+            "status": status_text,
+            "score": score,
+            "action_url": f"/reports/{session.session_id}" if session.is_finished else f"/test/{session.session_id}" 
+        })
+        
+    return {
+        "items": all_summaries,
+        "total": total_items,
+        "page": page,
+        "size": size,
+        "total_pages": math.ceil(total_items / size) if total_items > 0 else 0
+    }
