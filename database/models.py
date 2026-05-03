@@ -44,6 +44,7 @@ class User(Base):
     surname = Column(String(30), nullable=False)
     age = Column(Integer, nullable=False)
     email = Column(String(30), nullable=True)
+    group_name = Column(String(50), nullable=True, index=True)
 
     # Relationships
     # FIX: Changed relationship target from StartedTest (old model) to TestSession (new model)

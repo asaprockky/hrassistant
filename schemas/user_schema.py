@@ -2,9 +2,44 @@ from datetime import date, datetime
 from typing import List, Optional
 import uuid
 from database.enums import Role
-from pydantic import BaseModel, ConfigDict, EmailStr
+from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
+
+class UserSearchItem(BaseModel):
+    id: uuid.UUID
+    name: str
+    surname: str
+    username: str
+    group_name: Optional[str] = None
+
+class PaginatedUserResponse(BaseModel):
+    items: List[UserSearchItem]
+    total_items: int
+    page: int
+    size: int
+    total_pages: int
+
+class CandidateCreate(BaseModel):
+    name: str = Field(..., max_length=30)
+    surname: str = Field(..., max_length=30)
+    age: int
+    email: Optional[str] = None
+    group_name: Optional[str] = None
+
+class CandidateCreatedResponse(BaseModel):
+    id: uuid.UUID
+    username: str
+    password: str  # We return the raw password ONLY ONCE here so admin can copy it
+    group_name: Optional[str]
+
+class AdvancedAssignmentUpdate(BaseModel):
+    add_user_ids: List[uuid.UUID] = []
+    add_groups: List[str] = []
+    remove_user_ids: List[uuid.UUID] = []
+    remove_groups: List[str] = []
+
+        
 class TestSessionItem(BaseModel):
     testId: str
     title: str
