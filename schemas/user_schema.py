@@ -5,55 +5,26 @@ from database.enums import Role
 from pydantic import BaseModel, ConfigDict, EmailStr
 
 
-# Active Tests Schema
-class ActiveTestItem(BaseModel):
-    test_id: str
-    test_title: str
-    created_by: str
-    created_at: datetime
-    deadline: Optional[datetime] = None
-    final_score: Optional[float] = 0
-
-class PaginatedActiveTests(BaseModel):
-    items: List[ActiveTestItem]
-    total: int
-    page: int
-    size: int
-    total_pages: int
-
-# Completed Tests Schema
-class CompletedTestItem(BaseModel):
-    test_id: str
-    assessment_name: str
-    date: Optional[str] = None
+class TestSessionItem(BaseModel):
+    testId: str
+    title: str
+    createdBy: str
+    createdAt: datetime
+    deadline: Optional[datetime] = None 
     score: int
-    status_label: str
-    action_url: str
-
-class PaginatedCompletedTests(BaseModel):
-    items: List[CompletedTestItem]
-    total: int
-    page: int
-    size: int
-    total_pages: int
-
-# All Tests Schema (New)
-class AllTestItem(BaseModel):
-    test_id: str
-    assessment_name: str
-    created_by: str
-    date: Optional[str] = None
     status: str
-    score: int
-    action_url: str
+    statusLabel: str
+    actionUrl: str
 
-class PaginatedAllTests(BaseModel):
-    items: List[AllTestItem]
+    class Config:
+        from_attributes = True
+
+class PaginatedTests(BaseModel):
+    items: List[TestSessionItem]
     total: int
     page: int
     size: int
-    total_pages: int
-
+    totalPages: int
 class ApplicationSummary(BaseModel):
     candidate_id: uuid.UUID
     vacancy_id: uuid.UUID
