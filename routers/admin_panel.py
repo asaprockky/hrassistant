@@ -32,6 +32,7 @@ from schemas.user_schema import (
     AdminUserAnswerOut,
     AdminUserOut,
     AdminVacancyOut,
+    AdvancedAssignmentUpdate,
     AssignmentUpdate,
     CandidateStatusUpdate,
     CompanyOut,
