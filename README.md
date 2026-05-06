@@ -44,9 +44,32 @@ Base URL: `https://api.talentflow.uz`
 
 | Method | URL |
 | --- | --- |
+| GET | `/admin/dashboard/summary` |
+| GET | `/admin/users` |
+| GET | `/admin/users/{user_id}` |
+| GET | `/admin/companies` |
+| GET | `/admin/companies/{company_id}` |
+| GET | `/admin/companies/{company_id}/users` |
+| GET | `/admin/companies/{company_id}/vacancies` |
+| GET | `/admin/vacancies` |
+| GET | `/admin/vacancies/{vacancy_id}` |
+| GET | `/admin/vacancies/{vacancy_id}/candidates` |
+| GET | `/admin/candidates` |
+| PATCH | `/admin/candidates/{candidate_id}/status` |
 | GET | `/admin/questions` |
+| GET | `/admin/questions/{question_id}` |
+| PATCH | `/admin/questions/{question_id}/difficulty` |
+| GET | `/admin/questions/{question_id}/history` |
+| GET | `/admin/practices` |
 | POST | `/admin/practices` |
+| GET | `/admin/practices/{practice_id}` |
+| GET | `/admin/practices/{practice_id}/questions` |
+| PATCH | `/admin/practices/{practice_id}` |
+| GET | `/admin/practices/{practice_id}/assignments` |
 | PATCH | `/admin/practices/{practice_id}/assignments` |
+| GET | `/admin/test-sessions` |
+| GET | `/admin/test-sessions/{session_id}` |
+| GET | `/admin/test-sessions/{session_id}/answers` |
 
 ## 7. Testing
 
