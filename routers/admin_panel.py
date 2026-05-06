@@ -1,10 +1,14 @@
 import uuid
+import secrets
+import string
 from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
+from passlib.context import CryptContext # Standard for password hashing
 
 from database.database import get_db
 from database.models import (
@@ -40,6 +44,7 @@ from schemas.user_schema import (
 )
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # --- SECURITY DEPENDENCY ---
 def require_admin(current_user: User = Depends(get_current_user)):
@@ -50,6 +55,11 @@ def require_admin(current_user: User = Depends(get_current_user)):
         )
     return current_user
 
+# --- HELPER FUNCTIONS ---
+def generate_random_password(length=8):
+    """Generates a secure random 8-character password."""
+    alphabet = string.ascii_letters + string.digits
+    return ''.join(secrets.choice(alphabet) for i in range(length))
 
 # --- ENDPOINTS ---
 
@@ -449,13 +459,32 @@ def create_practice(
         created_at=datetime.utcnow()
     )
     
-    db.add(new_practice)
+    raw_password = generate_random_password()
+    hashed_password = pwd_context.hash(raw_password)
+    username = generate_unique_username(data.name, data.surname, db)
+
+    new_user = User(
+        id=uuid.uuid4(),
+        username=username,
+        password=hashed_password,
+        role=Role.USER,
+        name=data.name,
+        surname=data.surname,
+        age=data.age,
+        email=data.email,
+        group_name=data.group_name
+    )
+
+    db.add(new_user)
     db.commit()
-    db.refresh(new_practice)
-    
+    db.refresh(new_user)
+
+    # Return the unhashed password so the admin can give it to the candidate!
     return {
-        "message": "Practice created successfully", 
-        "practice_id": new_practice.practice_id
+        "id": new_user.id,
+        "username": new_user.username,
+        "password": raw_password, 
+        "group_name": new_user.group_name
     }
 
 
@@ -494,45 +523,69 @@ def list_practice_assignments(
 
 
 @router.patch("/practices/{practice_id}/assignments")
-def manage_assignments(
+def manage_advanced_assignments(
     practice_id: uuid.UUID,
-    update_data: AssignmentUpdate,
+    update_data: AdvancedAssignmentUpdate,
     db: Session = Depends(get_db),
     admin_user = Depends(require_admin)
 ):
+    """Assigns or removes a practice to specific users AND/OR entire groups."""
+    
     practice = db.query(Practice).filter(Practice.practice_id == practice_id).first()
     if not practice:
         raise HTTPException(status_code=404, detail="Practice not found")
 
     response_data = {"added": 0, "removed": 0}
 
-    # Remove Users
-    if update_data.remove_user_ids:
-        delete_query = db.query(PracticeAssignment).filter(
-            PracticeAssignment.practice_id == practice_id,
-            PracticeAssignment.user_id.in_(update_data.remove_user_ids)
+    # --- PART A: REMOVALS ---
+    # Find all users to remove (combining explicit IDs + Group members)
+    users_to_remove_query = db.query(User.id).filter(
+        or_(
+            User.id.in_(update_data.remove_user_ids),
+            User.group_name.in_(update_data.remove_groups) if update_data.remove_groups else False
         )
-        deleted_count = delete_query.delete(synchronize_session=False)
+    )
+    remove_ids = [row[0] for row in users_to_remove_query.all()]
+
+    if remove_ids:
+        deleted_count = db.query(PracticeAssignment).filter(
+            PracticeAssignment.practice_id == practice_id,
+            PracticeAssignment.user_id.in_(remove_ids)
+        ).delete(synchronize_session=False)
         response_data["removed"] = deleted_count
 
-    # Add Users
-    if update_data.add_user_ids:
-        new_assignments = []
-        for user_id in update_data.add_user_ids:
-            # Check duplicate assignment
-            exists = db.query(PracticeAssignment).filter(
-                PracticeAssignment.practice_id == practice_id,
-                PracticeAssignment.user_id == user_id
-            ).first()
-            
-            if not exists:
-                new_assignments.append(PracticeAssignment(
-                    assignment_id=uuid.uuid4(),
-                    practice_id=practice_id,
-                    user_id=user_id,
-                    assigned_at=datetime.utcnow()
-                ))
-        
+    # --- PART B: ADDITIONS ---
+    # Find all users to add (combining explicit IDs + Group members)
+    users_to_add_query = db.query(User.id).filter(
+        or_(
+            User.id.in_(update_data.add_user_ids),
+            User.group_name.in_(update_data.add_groups) if update_data.add_groups else False
+        )
+    )
+    # Using a set removes duplicate target IDs instantly
+    target_add_ids = {row[0] for row in users_to_add_query.all()} 
+
+    if target_add_ids:
+        # Fetch current assignments to avoid Duplicate Key Errors
+        existing_assignments = db.query(PracticeAssignment.user_id).filter(
+            PracticeAssignment.practice_id == practice_id,
+            PracticeAssignment.user_id.in_(target_add_ids)
+        ).all()
+        existing_ids = {row[0] for row in existing_assignments}
+
+        # Calculate only the users who don't already have the assignment
+        final_ids_to_add = target_add_ids - existing_ids
+
+        new_assignments = [
+            PracticeAssignment(
+                assignment_id=uuid.uuid4(),
+                practice_id=practice_id,
+                user_id=u_id,
+                assigned_at=datetime.utcnow(),
+                is_completed=False
+            ) for u_id in final_ids_to_add
+        ]
+
         if new_assignments:
             db.add_all(new_assignments)
             response_data["added"] = len(new_assignments)
