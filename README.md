@@ -42,6 +42,7 @@ The main application is created in `main.py`. Routers are mounted from `routers/
 | `routers/user_resumes.py` | Placeholder router; it is not currently mounted in `main.py`. |
 | `schemas/ai_resume_reviewer.py` | Prototype Gemini resume-review prompt/script; not mounted as an API route. |
 | `utils/ai_logic.py` | Sigmoid-based adaptive difficulty calculation for questions. |
+| `utils/mailer.py` | Environment-driven SMTP helper used by admin account and assessment invitations. |
 | `db.py` | Destructive sample-data seeding script; drops and recreates tables. |
 | `alembic/` and `alembic.ini` | Alembic migration setup. Current migration history appears older than the current models. |
 | `passenger_wsgi.py` | Passenger/cPanel-style WSGI bridge using `a2wsgi`. |
@@ -95,11 +96,11 @@ Only one true third-party API key appears in the current code: the Google Gemini
 | `JWT_SECRET_KEY` | `SECRET_KEY` in `auth/jwt_handler.py`; imported by `routers/login.py` | Symmetric signing secret for JWT access tokens using HS256. The same secret signs tokens at login and verifies them on protected requests. | Prevents users from forging or modifying tokens. If this changes, all existing tokens become invalid, which is useful after a breach but disruptive during normal operation. |
 | `JWT_ALGORITHM` | `ALGORITHM` in `auth/jwt_handler.py` | JWT signing algorithm. The code currently uses `HS256`. | Defines how token signatures are produced and verified. Keep this consistent across token creation and validation. |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | `ACCESS_TOKEN_EXPIRE_MINUTES` in `auth/jwt_handler.py` | Controls the JWT `exp` claim. The current code sets token lifetime to 60 minutes. | Limits how long a stolen token remains useful. Shorter lifetimes improve security; longer lifetimes reduce login friction. |
-| `SMTP_SERVER` | `SMTP_SERVER` in `routers/email.py` | SMTP hostname used to send verification emails. Current code points at Gmail SMTP. | The email verification route needs a mail server to deliver one-time codes. |
-| `SMTP_PORT` | `PORT` in `routers/email.py` | SMTP SSL port. Current code uses `465`. | Required to establish the encrypted SMTP connection. |
-| `SMTP_LOGIN` | `LOGIN` in `routers/email.py` | Sender mailbox username for SMTP authentication. | Identifies the Gmail account sending verification codes. |
-| `SMTP_APP_PASSWORD` | `PASSWORD` in `routers/email.py` | Gmail app password used by the SMTP client. This is not a normal Google password; it is a scoped credential generated from a Google account with 2FA. | Gmail will not allow this app to send mail unless SMTP login succeeds. Rotate this value if it has ever been committed. |
-| `SENDER_EMAIL` | `SENDER_EMAIL` in `routers/email.py` | Email address shown in the `From` header. Current code sets it to the SMTP login. | Users need a recognizable sender for verification messages, and SMTP providers often require the sender to match the authenticated account. |
+| `SMTP_SERVER` | `SMTP_SERVER` in `routers/email.py`; env-read by `utils/mailer.py` | SMTP hostname used to send verification emails and admin invitations. Current default points at Gmail SMTP. | The email verification route and admin invitation routes need a mail server to deliver one-time codes, account credentials, and assessment links. |
+| `SMTP_PORT` | `PORT` in `routers/email.py`; env-read by `utils/mailer.py` | SMTP SSL port. Current default is `465`. | Required to establish the encrypted SMTP connection. |
+| `SMTP_LOGIN` | `LOGIN` in `routers/email.py`; env-read by `utils/mailer.py` | Sender mailbox username for SMTP authentication. | Identifies the mailbox sending verification codes and admin invitations. |
+| `SMTP_APP_PASSWORD` | `PASSWORD` in `routers/email.py`; env-read by `utils/mailer.py` | Gmail app password used by the SMTP client. This is not a normal Google password; it is a scoped credential generated from a Google account with 2FA. | Gmail will not allow this app to send mail unless SMTP login succeeds. Rotate this value if it has ever been committed. |
+| `SENDER_EMAIL` | `SENDER_EMAIL` in `routers/email.py`; env-read by `utils/mailer.py` | Email address shown in the `From` header. Current email-verification code sets it to the SMTP login. | Users need a recognizable sender for verification messages and assessment invitations, and SMTP providers often require the sender to match the authenticated account. |
 | `GOOGLE_GEMINI_API_KEY` | Hardcoded `genai.configure(api_key=...)` in `schemas/ai_resume_reviewer.py` and `test.py` | Authenticates requests to Google Generative AI / Gemini. The prototype uses `gemini-2.5-flash`. | Used by the resume-review prototype to turn a job description and resume text into structured JSON: match score, advantages, disadvantages, education, experience, and skills. This logic is not currently wired into the FastAPI upload endpoint. |
 | `CORS_ALLOWED_ORIGINS` | Hardcoded list in `main.py` | Browser security allow-list for frontend origins. Current values include localhost and deployed Vercel frontends. | Allows the frontend to call this API from a different origin and send credentials such as cookies. Missing origins cause browser CORS failures even when the API is healthy. |
 
@@ -121,7 +122,7 @@ GOOGLE_GEMINI_API_KEY=replace-with-google-ai-studio-key
 CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:5173,https://your-frontend.example
 ```
 
-Current code does not load this `.env` automatically. To make the configuration above active, update the hardcoded constants to read from `os.getenv(...)` or a settings object before deployment.
+The new admin invitation helper reads SMTP settings from environment variables. The older database, JWT, Gemini, and email-verification code still uses hardcoded constants, so those should be moved to `os.getenv(...)` or a settings object before deployment.
 
 ## Local Setup
 
@@ -534,36 +535,102 @@ Resume upload currently extracts text only. It does not create a `Candidate` row
 
 ### Admin
 
-All admin routes require a user whose role is `ADMIN` or `SUPERADMIN`.
+In this product, an admin is not just a "site moderator." An admin is the operational owner for hiring or university assessment workflows. They create vacancies, build question banks, assemble assessments, create or search student/candidate users, assign tests only to invited users, send login credentials and invitations, and track student progress from their own panel.
+
+All admin routes require a user whose role is `ADMIN` or `SUPERADMIN`. Normal admins are scoped to their own `company_id` where the model supports it. `SUPERADMIN` can operate across companies. Normal admins can create `USER` accounts only; only `SUPERADMIN` should create other admins.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/admin/dashboard/summary` | Counts users, candidates, vacancies, practices, questions, active/completed sessions, and average score. |
-| `GET` | `/admin/users` | Lists users with optional `role`, `search`, `company_id`, `offset`, and `limit`. |
+| `GET` | `/admin/dashboard/students` | Personal admin panel stats for students: assigned tests, pending assignments, active sessions, completed sessions, average score, and last activity. Supports `group_name`, `search`, `offset`, and `limit`. |
+| `GET` | `/admin/users` | Lists users with optional `role`, `search`, `company_id`, `group_name`, `offset`, and `limit`. |
+| `GET` | `/admin/users/search` | Search endpoint for appointing tests to existing users. Searches username, name, surname, email, and group. |
+| `POST` | `/admin/users` | Creates one user/student. Can generate a password, optionally assign a practice, and optionally email login/test invitation. |
+| `POST` | `/admin/users/bulk` | Bulk creates or reuses students by email, assigns an optional practice, and sends invitations for massive university-style testing. |
 | `GET` | `/admin/users/{user_id}` | Reads one user. |
 | `GET` | `/admin/companies` | Lists companies with search and pagination. |
 | `GET` | `/admin/companies/{company_id}` | Reads one company. |
 | `GET` | `/admin/companies/{company_id}/users` | Lists users in a company. |
 | `GET` | `/admin/companies/{company_id}/vacancies` | Lists vacancies for a company. |
 | `GET` | `/admin/vacancies` | Lists vacancies with optional filters. |
+| `POST` | `/admin/vacancies` | Creates a vacancy for the admin's company or a selected company for superadmins. |
 | `GET` | `/admin/vacancies/{vacancy_id}` | Reads one vacancy. |
+| `PATCH` | `/admin/vacancies/{vacancy_id}` | Updates vacancy fields, including active/closed state. |
 | `GET` | `/admin/vacancies/{vacancy_id}/candidates` | Lists candidates for a vacancy. |
 | `GET` | `/admin/candidates` | Lists candidates with optional status, vacancy, and search filters. |
 | `PATCH` | `/admin/candidates/{candidate_id}/status` | Updates candidate pipeline status. |
 | `GET` | `/admin/questions` | Lists question summaries. |
+| `POST` | `/admin/questions` | Creates one question with generated or supplied option UUIDs and a correct answer. |
+| `POST` | `/admin/questions/bulk` | Creates multiple questions in one request. |
 | `GET` | `/admin/questions/{question_id}` | Reads full question details including options and correct answer. |
+| `PATCH` | `/admin/questions/{question_id}` | Updates question text, options, correct answer, category, points, or difficulty. |
 | `PATCH` | `/admin/questions/{question_id}/difficulty` | Manually updates difficulty and writes `QuestionHistory`. |
 | `GET` | `/admin/questions/{question_id}/history` | Lists difficulty history for a question. |
 | `GET` | `/admin/practices` | Lists practices. |
-| `POST` | `/admin/practices` | Intended to create a practice. Current implementation has issues listed below. |
+| `POST` | `/admin/practices` | Creates an assessment/practice after validating that all referenced questions exist. |
 | `GET` | `/admin/practices/{practice_id}` | Reads one practice. |
 | `GET` | `/admin/practices/{practice_id}/questions` | Lists questions inside a practice. |
 | `PATCH` | `/admin/practices/{practice_id}` | Updates practice fields. |
 | `GET` | `/admin/practices/{practice_id}/assignments` | Lists assignments for a practice. |
-| `PATCH` | `/admin/practices/{practice_id}/assignments` | Adds/removes assignments by user IDs and/or group names. |
+| `PATCH` | `/admin/practices/{practice_id}/assignments` | Adds/removes assignments by user IDs and/or group names. Can send invitations to newly added users. |
+| `POST` | `/admin/practices/{practice_id}/invitations` | Sends or resends invitations to already assigned users by IDs, groups, or all pending assignees. |
 | `GET` | `/admin/test-sessions` | Lists test sessions with filters. |
 | `GET` | `/admin/test-sessions/{session_id}` | Reads one test session. |
 | `GET` | `/admin/test-sessions/{session_id}/answers` | Lists submitted answers in a session. |
+
+#### Creating A Question
+
+Use `correct_option_index` when the client does not want to generate option IDs itself:
+
+```json
+{
+  "text": "Which SQL clause filters rows?",
+  "category": "SQL",
+  "points": 5,
+  "difficulty_level": 0.4,
+  "options": [
+    { "text": "ORDER BY" },
+    { "text": "WHERE" },
+    { "text": "GROUP BY" }
+  ],
+  "correct_option_index": 1
+}
+```
+
+The backend stores options as JSON objects with UUIDs and stores `correct_answer` as the UUID of the correct option. That keeps websocket answer checking deterministic.
+
+#### Bulk Student Invitation
+
+`POST /admin/users/bulk` supports the university use case: create many student accounts, assign them to an assessment, and email credentials in one operation.
+
+```json
+{
+  "practice_id": "practice-uuid",
+  "send_invitation": true,
+  "frontend_test_base_url": "https://ai-talent-flow.vercel.app/test",
+  "group_name": "CS-2026-A",
+  "users": [
+    {
+      "name": "Ali",
+      "surname": "Karimov",
+      "age": 19,
+      "email": "ali@example.edu"
+    },
+    {
+      "name": "Malika",
+      "surname": "Rasulova",
+      "age": 20,
+      "email": "malika@example.edu"
+    }
+  ]
+}
+```
+
+The response returns generated usernames and passwords once, plus invitation delivery status. If SMTP is not configured, users and assignments are still created, and the response reports the email failure.
+
+#### Assignment Security
+
+Tests are invitation-only. The candidate assignment list only returns practices where a `practice_assignments` row exists for the current user. The websocket also checks assignment membership before starting a test and closes with policy violation code `1008` when a user is not invited. The result endpoint now also returns `403` for non-invited users.
 
 ## Resume AI Prototype
 
@@ -621,13 +688,13 @@ These are not README theory; they come from the checked-in code:
 - Real-looking credentials are committed in `database/database.py`, `alembic.ini`, `routers/email.py`, `auth/jwt_handler.py`, `schemas/ai_resume_reviewer.py`, and `test.py`. Rotate them before any public or production use.
 - `/users` in `main.py` lists all users without authentication.
 - `/vacancies/resume-uploads` writes uploaded PDFs into the project root and checks file type after saving. Validate before saving and use a dedicated upload directory.
-- `routers/admin_panel.py` `POST /admin/practices` creates a `Practice`, then references undefined names `data` and `generate_unique_username`, and returns candidate-user fields instead of practice fields. This endpoint needs repair before use.
 - `routers/email.py` contains legacy schema and seed helpers referencing `user_profile`, `userid`, `is_verified`, and `StartedTest`, which do not match the current models.
 - Importing `routers/email.py` runs `Base.metadata.create_all(bind=engine)`. Schema creation during router import can surprise deployments; migrations are safer.
 - `alembic/versions/81a408e504ad_apply_latest_schema_changes.py` does not match the current `Practice` model.
 - `test.db` contains an older SQLite schema with `started_test` and `user_profile`; it should not be treated as the current schema.
 - `requirements.txt` is missing packages used by optional/prototype files: `google-generativeai` and `a2wsgi`.
 - `schemas/ai_resume_reviewer.py` currently calls `generate_response(...)` with an argument even though its function definition accepts no arguments.
+- Practices and questions still do not have `created_by` or `company_id` ownership columns. Admin scoping is enforced where the current schema supports it, but assessment ownership should be added in the next schema migration.
 - `__pycache__` files and sample personal artifacts are committed. Consider removing generated files and sensitive samples from version control.
 
 ## Production Hardening Checklist
@@ -638,7 +705,7 @@ These are not README theory; they come from the checked-in code:
 - Protect `/users` and resume upload endpoints.
 - Make cookies secure in production.
 - Replace in-memory email verification codes with Redis or a database table.
-- Repair `POST /admin/practices`.
+- Add ownership columns for practices and questions so admin-created assessments are fully scoped.
 - Align Alembic migrations with the current models.
 - Remove generated `__pycache__`, local DB files, and private sample documents from the repository.
 - Add integration tests for login, protected routes, admin role checks, assignment creation, websocket scoring, and test completion.

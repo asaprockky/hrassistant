@@ -96,9 +96,15 @@ async def testing_websocket(
                     PracticeAssignment.user_id == user_id
                 ).first()
 
-                if not assignment or assignment.is_completed:
-                    await websocket.send_json({"error": "Test already completed or not assigned."})
-                    continue
+                if not assignment:
+                    await websocket.send_json({"error": "You are not invited to this test."})
+                    await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                    return
+
+                if assignment.is_completed:
+                    await websocket.send_json({"error": "This assignment is already completed."})
+                    await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+                    return
 
                 existing_session = db.query(TestSession).filter(
                     TestSession.user_id == user_id,
@@ -271,6 +277,13 @@ def get_test_result(
     current_user=Depends(get_current_user)
 ):
     user_id = current_user.id
+
+    assignment = db.query(PracticeAssignment).filter(
+        PracticeAssignment.practice_id == practice_id,
+        PracticeAssignment.user_id == user_id
+    ).first()
+    if not assignment:
+        raise HTTPException(status_code=403, detail="You are not invited to this test.")
 
     session = db.query(TestSession).filter(
         TestSession.user_id == user_id,

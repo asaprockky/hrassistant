@@ -43,7 +43,7 @@ class User(Base):
     name = Column(String(30), nullable=False)
     surname = Column(String(30), nullable=False)
     age = Column(Integer, nullable=False)
-    email = Column(String(30), nullable=True)
+    email = Column(String(100), nullable=True)
     group_name = Column(String(50), nullable=True, index=True)
 
     # Relationships
