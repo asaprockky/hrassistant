@@ -5,7 +5,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, Query, status
 from sqlalchemy.orm import Session
-from sqlalchemy import Integer, func, or_, and_
+from sqlalchemy import Integer, case, func, or_, and_
 
 # --- Imports (Ensure these match your project structure) ---
 from database.database import get_db
@@ -82,6 +82,13 @@ async def testing_websocket(
     await websocket.accept()
     user_id = current_user.id
     session_id = None  # Tracks the active session for this connection
+    active_session = None
+    session_score = 0.0
+    answered_question_ids = set()
+    practice_cache = None
+    practice_question_ids = []
+    practice_duration = None
+    total_weight = 1
 
     try:
         while True:
@@ -116,35 +123,45 @@ async def testing_websocket(
                     await websocket.close()
                     return
 
-                practice = db.query(Practice).filter(Practice.practice_id == practice_id).first()
-                if not practice or not practice.is_valid:
+                practice_cache = db.query(Practice).filter(Practice.practice_id == practice_id).first()
+                if not practice_cache or not practice_cache.is_valid:
                     await websocket.send_json({"error": "Practice not found."})
                     continue
 
                 now_utc = datetime.now(timezone.utc).replace(tzinfo=None)
-                if practice.deadline and practice.deadline < now_utc:
+                if practice_cache.deadline and practice_cache.deadline < now_utc:
                     await websocket.send_json({"error": "Practice deadline has passed."})
                     await websocket.close()
                     return
 
-                new_session = TestSession(
-                    session_id=uuid.uuid4(),
+                practice_question_ids = list(practice_cache.question_ids or [])
+                practice_duration = practice_cache.duration_minutes
+                total_weight = 1
+                if practice_question_ids:
+                    total_weight = db.query(func.sum(Question.points)) \
+                        .filter(Question.id.in_(practice_question_ids)).scalar() or 1
+
+                new_session_id = uuid.uuid4()
+                active_session = TestSession(
+                    session_id=new_session_id,
                     practice_id=practice_id,
                     user_id=user_id,
                     overall_points=0,
                     is_finished=False,
                     started_time=datetime.utcnow()
                 )
-                db.add(new_session)
+                db.add(active_session)
                 db.commit()
 
-                session_id = new_session.session_id
+                session_id = new_session_id
+                session_score = 0.0
+                answered_question_ids = set()
 
                 await websocket.send_json({
                     "event": "test_started",
                     "session_id": str(session_id),
-                    "quantity": len(practice.question_ids) if practice.question_ids else 0,
-                    "duration": practice.duration_minutes
+                    "quantity": len(practice_question_ids),
+                    "duration": practice_duration
                 })
 
             # --- ACTION: GET QUESTION ---
@@ -153,20 +170,26 @@ async def testing_websocket(
                     await websocket.send_json({"error": "Test not started."})
                     continue
 
-                practice = db.query(Practice).filter(Practice.practice_id == practice_id).first()
-                answered_uuids = db.query(UserAnswer.question_id).filter(UserAnswer.session_id == session_id).all()
-                answered_ids_str = [str(aid[0]) for aid in answered_uuids]
+                if not practice_cache:
+                    practice_cache = db.query(Practice).filter(Practice.practice_id == practice_id).first()
+                    practice_question_ids = list(practice_cache.question_ids or []) if practice_cache else []
 
                 next_question = None
-                if practice and practice.question_ids:
-                    for q_id in practice.question_ids:
-                        if str(q_id) in answered_ids_str:
-                            continue
-
-                        question_obj = db.query(Question).filter(Question.id == q_id).first()
-                        if question_obj:
-                            next_question = question_obj
-                            break
+                unanswered_ids = [
+                    q_id for q_id in practice_question_ids
+                    if q_id not in answered_question_ids
+                ]
+                if unanswered_ids:
+                    question_order = {
+                        question_id: index
+                        for index, question_id in enumerate(unanswered_ids)
+                    }
+                    next_question = (
+                        db.query(Question)
+                        .filter(Question.id.in_(unanswered_ids))
+                        .order_by(case(question_order, value=Question.id))
+                        .first()
+                    )
 
                 if not next_question:
                     await handle_finish_test(session_id, user_id, practice_id, db, websocket)
@@ -194,29 +217,32 @@ async def testing_websocket(
                 if not question:
                     await websocket.send_json({"error": "Question not found."})
                     continue
+                question_id = question.id
 
                 existing_answer = db.query(UserAnswer).filter(
                     UserAnswer.session_id == session_id,
-                    UserAnswer.question_id == question.id
+                    UserAnswer.question_id == question_id
                 ).first()
 
                 if existing_answer:
                     await websocket.send_json({"error": "Question already answered."})
                     continue
 
-                practice = db.query(Practice).filter(Practice.practice_id == practice_id).first()
-                total_weight = 1
-                if practice.question_ids:
-                    total_weight = db.query(func.sum(Question.points)) \
-                        .filter(Question.id.in_(practice.question_ids)).scalar() or 1
+                if not practice_cache:
+                    practice_cache = db.query(Practice).filter(Practice.practice_id == practice_id).first()
+                    practice_question_ids = list(practice_cache.question_ids or []) if practice_cache else []
+                    if practice_question_ids:
+                        total_weight = db.query(func.sum(Question.points)) \
+                            .filter(Question.id.in_(practice_question_ids)).scalar() or 1
 
                 is_correct = str(question.correct_answer) == user_ans
+                correct_answer = str(question.correct_answer)
                 points_awarded = (question.points / total_weight) * 100 if is_correct else 0.0
 
                 user_answer_entry = UserAnswer(
                     id=uuid.uuid4(),
                     session_id=session_id,
-                    question_id=question.id,
+                    question_id=question_id,
                     user_answer=user_ans,
                     is_correct=is_correct,
                     points_awarded=points_awarded,
@@ -225,34 +251,43 @@ async def testing_websocket(
                 db.add(user_answer_entry)
                 db.flush()
 
-                session = db.query(TestSession).filter(TestSession.session_id == session_id).first()
-                session.overall_points += points_awarded
+                if active_session is None:
+                    active_session = db.query(TestSession).filter(TestSession.session_id == session_id).first()
+                    if active_session:
+                        session_score = active_session.overall_points or 0
+                    else:
+                        session_score = 0.0
+
+                if active_session:
+                    session_score += points_awarded
+                    active_session.overall_points = session_score
 
                 # AI Difficulty logic
                 stats = db.query(
                     func.count(UserAnswer.id).label("total"),
                     func.sum(func.cast(UserAnswer.is_correct == False, Integer)).label("failures"),
                     func.avg(UserAnswer.time_spent).label("avg_time")
-                ).filter(UserAnswer.question_id == question.id).first()
+                ).filter(UserAnswer.question_id == question_id).first()
 
                 if stats.total > 0:
                     f_rate = (stats.failures or 0) / stats.total
                     t_factor = float(stats.avg_time or 0)
                     question.difficulty_level = calculate_difficulty_score(f_rate, t_factor)
 
+                new_difficulty = question.difficulty_level
                 db.commit()
+                answered_question_ids.add(question_id)
 
                 # Check if finished
-                answered_count = db.query(UserAnswer).filter(UserAnswer.session_id == session_id).count()
-                if answered_count >= len(practice.question_ids):
+                if len(answered_question_ids) >= len(practice_question_ids):
                     await handle_finish_test(session_id, user_id, practice_id, db, websocket)
                 else:
                     await websocket.send_json({
                         "event": "answer_result",
                         "is_correct": is_correct,
-                        "correct_answer": str(question.correct_answer),
+                        "correct_answer": correct_answer,
                         "points_awarded": round(points_awarded, 2),
-                        "new_difficulty": question.difficulty_level
+                        "new_difficulty": new_difficulty
                     })
 
             # --- ACTION: FINISH TEST (Manual) ---

@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timedelta
-from sqlalchemy import JSON, Column, Date, Integer, String, ForeignKey, Boolean, Text, Float, DateTime, Enum as SAEnum
+from sqlalchemy import JSON, Column, Date, Integer, String, ForeignKey, Boolean, Text, Float, DateTime, Enum as SAEnum, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID, ARRAY, JSON
 from sqlalchemy.sql import func
@@ -36,7 +36,7 @@ class User(Base):
     role = Column(SAEnum(Role), default=Role.USER, nullable=False)
     password = Column(String(100), nullable=False)
     
-    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=True)
+    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), nullable=True, index=True)
     company = relationship("Company", back_populates="users")
 
     # Profile fields
@@ -66,7 +66,7 @@ class Created_Vacancy(Base):
     candidate_count = Column(Integer, default=0)
     is_available = Column(Boolean, default=True)
 
-    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"))
+    company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"), index=True)
     company = relationship("Company", back_populates="created_vacancies")
 
     candidates = relationship("Candidate", back_populates="vacancy")
@@ -77,7 +77,7 @@ class Candidate(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     # --- NEW COLUMNS ---
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
     status = Column(String(50), default="Applied") # E.g., "Applied", "Testing", "Interview", "Rejected"
     # -------------------
     
@@ -89,7 +89,7 @@ class Candidate(Base):
     experience = Column(String(255))
     skills = Column(String(255))
 
-    vacancy_id = Column(UUID(as_uuid=True), ForeignKey("created_vacancies.id"))
+    vacancy_id = Column(UUID(as_uuid=True), ForeignKey("created_vacancies.id"), index=True)
     vacancy = relationship("Created_Vacancy", back_populates="candidates")
     user = relationship("User") # Add relationship to User
 #### TESTING PART
@@ -100,7 +100,7 @@ class QuestionHistory(Base):
     __tablename__ = "question_history"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    question_id = Column(UUID(as_uuid=True), ForeignKey("user_questions.id"), nullable=False)
+    question_id = Column(UUID(as_uuid=True), ForeignKey("user_questions.id"), nullable=False, index=True)
     
     # Store what changed
     old_difficulty = Column(Float)
@@ -108,7 +108,7 @@ class QuestionHistory(Base):
     change_reason = Column(String) # e.g., "AI recalibration" or "Admin manual update"
     
     changed_at = Column(DateTime, server_default=func.now())
-    changed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    changed_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True, index=True)
 
     question = relationship("Question", back_populates="history")
 
@@ -124,7 +124,7 @@ class Question(Base):
     options = Column(JSON, nullable=False) 
     history = relationship("QuestionHistory", back_populates="question", cascade="all, delete-orphan")
     difficulty_level = Column(Float, default=0.5)
-    category = Column(String(50))
+    category = Column(String(50), index=True)
     points = Column(Float, default=1.0)
 class Practice(Base):
     __tablename__ = "practice"
@@ -147,9 +147,13 @@ class Practice(Base):
 # New Association Table
 class PracticeAssignment(Base):
     __tablename__ = "practice_assignments"
+    __table_args__ = (
+        Index("ix_practice_assignments_practice_user", "practice_id", "user_id"),
+    )
+
     assignment_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    practice_id = Column(UUID(as_uuid=True), ForeignKey("practice.practice_id"), nullable=False)
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    practice_id = Column(UUID(as_uuid=True), ForeignKey("practice.practice_id"), nullable=False, index=True)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
     assigned_at = Column(DateTime, default=datetime.utcnow)
     is_completed = Column(Boolean, default=False)
     completed_at = Column(DateTime, nullable=True)
@@ -158,12 +162,17 @@ class PracticeAssignment(Base):
     
 class TestSession(Base):
     __tablename__ = "test_session"
+    __table_args__ = (
+        Index("ix_test_session_user_practice", "user_id", "practice_id"),
+        Index("ix_test_session_user_finished_started", "user_id", "is_finished", "started_time"),
+    )
+
     session_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     
-    practice_id = Column(UUID(as_uuid=True), ForeignKey("practice.practice_id"), nullable=False)
+    practice_id = Column(UUID(as_uuid=True), ForeignKey("practice.practice_id"), nullable=False, index=True)
     practice = relationship("Practice", back_populates="test_sessions") # Added relationship to Practice
     
-    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
     user = relationship("User", back_populates="test_sessions") # Added relationship to User
     
     overall_points = Column(Float, default=0.0)
@@ -175,12 +184,16 @@ class TestSession(Base):
 
 class UserAnswer(Base):
     __tablename__ = "user_answers"
+    __table_args__ = (
+        Index("ix_user_answers_session_question", "session_id", "question_id"),
+    )
+
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     
-    session_id = Column(UUID(as_uuid=True), ForeignKey("test_session.session_id"))
+    session_id = Column(UUID(as_uuid=True), ForeignKey("test_session.session_id"), index=True)
     session = relationship("TestSession", back_populates="answers") # Relationship to TestSession
 
-    question_id = Column(UUID(as_uuid=True), ForeignKey("user_questions.id"))
+    question_id = Column(UUID(as_uuid=True), ForeignKey("user_questions.id"), index=True)
     user_answer = Column(String)
     is_correct = Column(Boolean)
     points_awarded = Column(Float)

@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 # Import your database and models
 from database.database import get_db
@@ -23,17 +23,20 @@ def get_company_name(db: Session, company_id: uuid.UUID) -> str:
     company = db.query(Company.name).filter(Company.id == company_id).first()
     return company[0] if company else "Unknown Company"
 
-async def get_current_user_ws(websocket: WebSocket, token: str):
+async def get_current_user_ws(websocket: WebSocket, token: str, db: Session = Depends(get_db)):
     """Dependency for WebSocket connections."""
-    user = get_current_user_from_token(token)
+    user = get_current_user_from_token(token, db)
     if not user:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
         raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION)
     return user
 
-def format_test_session(session: TestSession, db: Session) -> dict:
+def format_test_session(session: TestSession) -> dict:
     """Helper function to unify the response format to strict camelCase."""
-    company_name = get_company_name(db, session.user.company_id) if session.user.company_id else "Unassigned Test"
+    if session.user and session.user.company_id:
+        company_name = session.user.company.name if session.user.company else "Unknown Company"
+    else:
+        company_name = "Unassigned Test"
     score = int(session.overall_points or 0)
     is_finished = session.is_finished
     
@@ -70,7 +73,10 @@ def get_active_tests(
     user: User = Depends(get_current_user)
 ):
     """Retrieves a paginated list of active tests assigned to the user."""
-    base_query = db.query(TestSession).filter(
+    base_query = db.query(TestSession).options(
+        joinedload(TestSession.practice),
+        joinedload(TestSession.user).joinedload(User.company),
+    ).filter(
         TestSession.user_id == user.id,
         TestSession.is_finished == False
     ).order_by(TestSession.started_time.desc())
@@ -80,7 +86,7 @@ def get_active_tests(
     active_tests = base_query.offset(offset).limit(size).all()
     
     return {
-        "items": [format_test_session(t, db) for t in active_tests],
+        "items": [format_test_session(t) for t in active_tests],
         "total": total_items,
         "page": page,
         "size": size,
@@ -95,7 +101,10 @@ def get_test_history(
     user: User = Depends(get_current_user)
 ):
     """Retrieves a paginated list of finished test sessions assigned to the user."""
-    base_query = db.query(TestSession).filter(
+    base_query = db.query(TestSession).options(
+        joinedload(TestSession.practice),
+        joinedload(TestSession.user).joinedload(User.company),
+    ).filter(
         TestSession.user_id == user.id, 
         TestSession.is_finished == True
     ).order_by(TestSession.started_time.desc())
@@ -105,7 +114,7 @@ def get_test_history(
     completed_tests = base_query.offset(offset).limit(size).all()
         
     return {
-        "items": [format_test_session(t, db) for t in completed_tests],
+        "items": [format_test_session(t) for t in completed_tests],
         "total": total_items,
         "page": page,
         "size": size,
@@ -120,7 +129,10 @@ def get_all_tests(
     user: User = Depends(get_current_user)
 ):
     """Retrieves a paginated list of ALL test sessions (both active and completed)."""
-    base_query = db.query(TestSession).filter(
+    base_query = db.query(TestSession).options(
+        joinedload(TestSession.practice),
+        joinedload(TestSession.user).joinedload(User.company),
+    ).filter(
         TestSession.user_id == user.id
     ).order_by(TestSession.started_time.desc())
 
@@ -129,7 +141,7 @@ def get_all_tests(
     all_sessions = base_query.offset(offset).limit(size).all()
         
     return {
-        "items": [format_test_session(t, db) for t in all_sessions],
+        "items": [format_test_session(t) for t in all_sessions],
         "total": total_items,
         "page": page,
         "size": size,

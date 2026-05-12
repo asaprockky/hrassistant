@@ -2,7 +2,6 @@ import os
 import shutil
 import uuid
 from fastapi import APIRouter, HTTPException, UploadFile, File
-from database.database import SessionLocal
 from routers.login import get_data, get_current_user
 from schemas.user_schema import VacancyResponse
 from database.models import Created_Vacancy, User, Company
@@ -13,7 +12,7 @@ router = APIRouter(prefix="/vacancies", tags=["Vacancies"])
 
 
 @router.post("", response_model=VacancyResponse)
-async def create_vacancy(data: VacancyResponse, db: Session = Depends(get_data), current_user: User = Depends(get_current_user)):
+def create_vacancy(data: VacancyResponse, db: Session = Depends(get_data), current_user: User = Depends(get_current_user)):
     company = db.query(Company).filter(Company.id == current_user.company_id).first()
     if not company:
         raise HTTPException(status_code=400, detail="Company not found for this user")
@@ -34,7 +33,7 @@ async def create_vacancy(data: VacancyResponse, db: Session = Depends(get_data),
 
 
 @router.get("", response_model=list[VacancyResponse])
-async def list_vacancies(db: Session = Depends(get_data), current_user: User = Depends(get_current_user)):
+def list_vacancies(db: Session = Depends(get_data), current_user: User = Depends(get_current_user)):
     company = db.query(Company).filter(Company.id == current_user.company_id).first()
     if not company:
         raise HTTPException(status_code=400, detail="Company not found for this user")
@@ -43,9 +42,8 @@ async def list_vacancies(db: Session = Depends(get_data), current_user: User = D
 
     
 @router.post("/resume-uploads")
-async def upload_resume(file: UploadFile = File(...)):
+def upload_resume(file: UploadFile = File(...)):
     UPLOAD_DIR = ''
-    db: Session = SessionLocal()
     try:
         unique_filename = f"{uuid.uuid4()}_{file.filename}"
         file_path = os.path.join(UPLOAD_DIR, unique_filename)
@@ -69,9 +67,4 @@ async def upload_resume(file: UploadFile = File(...)):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error uploading file: {str(e)}")
-
-    finally:
-        db.close()
-
-
 
