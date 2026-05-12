@@ -93,11 +93,14 @@ class OptionSchema(BaseModel):
 class QuestionHistoryOut(BaseORMModel):
     id: uuid.UUID
     question_id: uuid.UUID
+    question_text: Optional[str] = None
     old_difficulty: Optional[float]
     new_difficulty: Optional[float]
     change_reason: Optional[str]
     changed_at: datetime
     changed_by: Optional[uuid.UUID]
+    changed_by_name: Optional[str] = None
+    changed_by_username: Optional[str] = None
 
 class QuestionOut(BaseORMModel):
     id: uuid.UUID
@@ -162,6 +165,7 @@ class AdminUserOut(BaseORMModel):
     age: int
     email: Optional[EmailStr] = None
     company_id: Optional[uuid.UUID] = None
+    company_name: Optional[str] = None
 
 class AdminVacancyOut(BaseORMModel):
     id: uuid.UUID
@@ -171,13 +175,18 @@ class AdminVacancyOut(BaseORMModel):
     start_date: date
     end_date: date
     company_id: Optional[uuid.UUID] = None
+    company_name: Optional[str] = None
     candidate_count: Optional[int] = 0
     is_available: Optional[bool] = True
 
 class AdminCandidateOut(BaseORMModel):
     id: uuid.UUID
     user_id: uuid.UUID
+    user_name: Optional[str] = None
+    user_username: Optional[str] = None
     vacancy_id: Optional[uuid.UUID] = None
+    position_title: Optional[str] = None
+    company_name: Optional[str] = None
     full_name: str
     status: str
     resume_loc: str
@@ -197,6 +206,7 @@ class PracticeOut(BaseORMModel):
     duration_minutes: int
     deadline: datetime
     question_ids: List[uuid.UUID]
+    question_texts: List[str] = []
     tags: List[str]
     is_valid: bool
     created_at: datetime
@@ -213,7 +223,10 @@ class PracticeUpdate(BaseModel):
 class PracticeAssignmentOut(BaseORMModel):
     assignment_id: uuid.UUID
     practice_id: uuid.UUID
+    practice_title: Optional[str] = None
     user_id: uuid.UUID
+    user_name: Optional[str] = None
+    user_username: Optional[str] = None
     assigned_at: datetime
     is_completed: bool
     completed_at: Optional[datetime] = None
@@ -221,7 +234,10 @@ class PracticeAssignmentOut(BaseORMModel):
 class AdminTestSessionOut(BaseORMModel):
     session_id: uuid.UUID
     practice_id: uuid.UUID
+    practice_title: Optional[str] = None
     user_id: uuid.UUID
+    user_name: Optional[str] = None
+    user_username: Optional[str] = None
     overall_points: float
     is_finished: bool
     started_time: datetime
@@ -230,7 +246,10 @@ class AdminUserAnswerOut(BaseORMModel):
     id: uuid.UUID
     session_id: Optional[uuid.UUID] = None
     question_id: Optional[uuid.UUID] = None
+    question_text: Optional[str] = None
     user_answer: Optional[str] = None
+    user_answer_text: Optional[str] = None
+    correct_answer_text: Optional[str] = None
     is_correct: Optional[bool] = None
     points_awarded: Optional[float] = None
     time_spent: Optional[float] = None

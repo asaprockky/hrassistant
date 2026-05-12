@@ -1,10 +1,10 @@
 import uuid
 from datetime import datetime
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, or_
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from database.database import get_db
 from database.models import (
@@ -51,6 +51,219 @@ def require_admin(current_user: User = Depends(get_current_user)):
     return current_user
 
 
+def _user_display_name(user: Optional[User]) -> Optional[str]:
+    if not user:
+        return None
+    full_name = " ".join(part for part in [user.name, user.surname] if part).strip()
+    return full_name or user.username
+
+
+def _option_text(question: Optional[Question], option_id) -> Optional[str]:
+    if not question or option_id is None:
+        return None
+
+    option_id_text = str(option_id)
+    options = question.options or []
+
+    if isinstance(options, dict):
+        for key, value in options.items():
+            if str(key) == option_id_text:
+                return value.get("text") if isinstance(value, dict) else str(value)
+            if isinstance(value, dict) and str(value.get("id")) == option_id_text:
+                return value.get("text")
+        return None
+
+    for option in options:
+        if isinstance(option, dict) and str(option.get("id")) == option_id_text:
+            return option.get("text")
+
+    return None
+
+
+def _admin_user_out(user: User) -> dict:
+    return {
+        "id": user.id,
+        "username": user.username,
+        "role": user.role,
+        "name": user.name,
+        "surname": user.surname,
+        "age": user.age,
+        "email": user.email,
+        "company_id": user.company_id,
+        "company_name": user.company.name if user.company else None,
+    }
+
+
+def _admin_vacancy_out(vacancy: Created_Vacancy) -> dict:
+    return {
+        "id": vacancy.id,
+        "job_name": vacancy.job_name,
+        "job_description": vacancy.job_description,
+        "tag": vacancy.tag,
+        "start_date": vacancy.start_date,
+        "end_date": vacancy.end_date,
+        "company_id": vacancy.company_id,
+        "company_name": vacancy.company.name if vacancy.company else None,
+        "candidate_count": vacancy.candidate_count,
+        "is_available": vacancy.is_available,
+    }
+
+
+def _admin_candidate_out(candidate: Candidate) -> dict:
+    vacancy = candidate.vacancy
+    company = vacancy.company if vacancy else None
+
+    return {
+        "id": candidate.id,
+        "user_id": candidate.user_id,
+        "user_name": _user_display_name(candidate.user),
+        "user_username": candidate.user.username if candidate.user else None,
+        "vacancy_id": candidate.vacancy_id,
+        "position_title": vacancy.job_name if vacancy else None,
+        "company_name": company.name if company else None,
+        "full_name": candidate.full_name,
+        "status": candidate.status,
+        "resume_loc": candidate.resume_loc,
+        "ai_score": candidate.ai_score,
+        "created_at": candidate.created_at,
+        "education": candidate.education,
+        "experience": candidate.experience,
+        "skills": candidate.skills,
+    }
+
+
+def _question_text_map(db: Session, question_ids: List[uuid.UUID]) -> Dict[str, str]:
+    unique_question_ids = []
+    seen_question_ids = set()
+    for question_id in question_ids:
+        if question_id is None:
+            continue
+        question_id_text = str(question_id)
+        if question_id_text not in seen_question_ids:
+            seen_question_ids.add(question_id_text)
+            unique_question_ids.append(question_id)
+
+    if not unique_question_ids:
+        return {}
+
+    questions = db.query(Question).filter(Question.id.in_(unique_question_ids)).all()
+    return {str(question.id): question.text for question in questions}
+
+
+def _admin_practice_out(practice: Practice, question_text_by_id: Dict[str, str]) -> dict:
+    question_texts = [
+        question_text_by_id[str(question_id)]
+        for question_id in (practice.question_ids or [])
+        if str(question_id) in question_text_by_id
+    ]
+
+    return {
+        "practice_id": practice.practice_id,
+        "title": practice.title,
+        "description": practice.description,
+        "duration_minutes": practice.duration_minutes,
+        "deadline": practice.deadline,
+        "question_ids": practice.question_ids,
+        "question_texts": question_texts,
+        "tags": practice.tags,
+        "is_valid": practice.is_valid,
+        "created_at": practice.created_at,
+    }
+
+
+def _admin_practices_out(db: Session, practices: List[Practice]) -> List[dict]:
+    question_ids = [
+        question_id
+        for practice in practices
+        for question_id in (practice.question_ids or [])
+    ]
+    question_text_by_id = _question_text_map(db, question_ids)
+    return [_admin_practice_out(practice, question_text_by_id) for practice in practices]
+
+
+def _admin_assignment_out(
+    assignment: PracticeAssignment,
+    practice_by_id: Dict[str, Practice],
+    user_by_id: Dict[str, User],
+) -> dict:
+    practice = practice_by_id.get(str(assignment.practice_id))
+    user = user_by_id.get(str(assignment.user_id))
+
+    return {
+        "assignment_id": assignment.assignment_id,
+        "practice_id": assignment.practice_id,
+        "practice_title": practice.title if practice else None,
+        "user_id": assignment.user_id,
+        "user_name": _user_display_name(user),
+        "user_username": user.username if user else None,
+        "assigned_at": assignment.assigned_at,
+        "is_completed": assignment.is_completed,
+        "completed_at": assignment.completed_at,
+    }
+
+
+def _admin_assignments_out(db: Session, assignments: List[PracticeAssignment]) -> List[dict]:
+    practice_ids = [assignment.practice_id for assignment in assignments]
+    user_ids = [assignment.user_id for assignment in assignments]
+
+    practices = db.query(Practice).filter(Practice.practice_id.in_(practice_ids)).all() if practice_ids else []
+    users = db.query(User).filter(User.id.in_(user_ids)).all() if user_ids else []
+
+    practice_by_id = {str(practice.practice_id): practice for practice in practices}
+    user_by_id = {str(user.id): user for user in users}
+
+    return [
+        _admin_assignment_out(assignment, practice_by_id, user_by_id)
+        for assignment in assignments
+    ]
+
+
+def _admin_test_session_out(session: TestSession) -> dict:
+    return {
+        "session_id": session.session_id,
+        "practice_id": session.practice_id,
+        "practice_title": session.practice.title if session.practice else None,
+        "user_id": session.user_id,
+        "user_name": _user_display_name(session.user),
+        "user_username": session.user.username if session.user else None,
+        "overall_points": session.overall_points,
+        "is_finished": session.is_finished,
+        "started_time": session.started_time,
+    }
+
+
+def _admin_answer_out(answer: UserAnswer, question_by_id: Dict[str, Question]) -> dict:
+    question = question_by_id.get(str(answer.question_id))
+
+    return {
+        "id": answer.id,
+        "session_id": answer.session_id,
+        "question_id": answer.question_id,
+        "question_text": question.text if question else None,
+        "user_answer": answer.user_answer,
+        "user_answer_text": _option_text(question, answer.user_answer),
+        "correct_answer_text": _option_text(question, question.correct_answer) if question else None,
+        "is_correct": answer.is_correct,
+        "points_awarded": answer.points_awarded,
+        "time_spent": answer.time_spent,
+    }
+
+
+def _admin_question_history_out(history: QuestionHistory, changed_by_user: Optional[User]) -> dict:
+    return {
+        "id": history.id,
+        "question_id": history.question_id,
+        "question_text": history.question.text if history.question else None,
+        "old_difficulty": history.old_difficulty,
+        "new_difficulty": history.new_difficulty,
+        "change_reason": history.change_reason,
+        "changed_at": history.changed_at,
+        "changed_by": history.changed_by,
+        "changed_by_name": _user_display_name(changed_by_user),
+        "changed_by_username": changed_by_user.username if changed_by_user else None,
+    }
+
+
 # --- ENDPOINTS ---
 
 # Dashboard
@@ -90,7 +303,7 @@ def list_users(
     db: Session = Depends(get_db),
     admin_user: User = Depends(require_admin)
 ):
-    query = db.query(User)
+    query = db.query(User).options(joinedload(User.company))
 
     if role:
         query = query.filter(User.role == role)
@@ -100,7 +313,8 @@ def list_users(
         pattern = f"%{search}%"
         query = query.filter(or_(User.username.ilike(pattern), User.name.ilike(pattern), User.surname.ilike(pattern)))
 
-    return query.order_by(User.username.asc()).offset(offset).limit(limit).all()
+    users = query.order_by(User.username.asc()).offset(offset).limit(limit).all()
+    return [_admin_user_out(user) for user in users]
 
 
 @router.get("/users/{user_id}", response_model=AdminUserOut)
@@ -109,10 +323,15 @@ def get_user(
     db: Session = Depends(get_db),
     admin_user: User = Depends(require_admin)
 ):
-    user = db.query(User).filter(User.id == user_id).first()
+    user = (
+        db.query(User)
+        .options(joinedload(User.company))
+        .filter(User.id == user_id)
+        .first()
+    )
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    return user
+    return _admin_user_out(user)
 
 
 @router.get("/companies", response_model=List[CompanyOut])
@@ -152,14 +371,16 @@ def list_company_users(
     db: Session = Depends(get_db),
     admin_user: User = Depends(require_admin)
 ):
-    return (
+    users = (
         db.query(User)
+        .options(joinedload(User.company))
         .filter(User.company_id == company_id)
         .order_by(User.username.asc())
         .offset(offset)
         .limit(limit)
         .all()
     )
+    return [_admin_user_out(user) for user in users]
 
 
 @router.get("/companies/{company_id}/vacancies", response_model=List[AdminVacancyOut])
@@ -170,14 +391,16 @@ def list_company_vacancies(
     db: Session = Depends(get_db),
     admin_user: User = Depends(require_admin)
 ):
-    return (
+    vacancies = (
         db.query(Created_Vacancy)
+        .options(joinedload(Created_Vacancy.company))
         .filter(Created_Vacancy.company_id == company_id)
         .order_by(Created_Vacancy.start_date.desc())
         .offset(offset)
         .limit(limit)
         .all()
     )
+    return [_admin_vacancy_out(vacancy) for vacancy in vacancies]
 
 
 # Vacancies and candidates
@@ -191,7 +414,7 @@ def list_vacancies(
     db: Session = Depends(get_db),
     admin_user: User = Depends(require_admin)
 ):
-    query = db.query(Created_Vacancy)
+    query = db.query(Created_Vacancy).options(joinedload(Created_Vacancy.company))
 
     if company_id:
         query = query.filter(Created_Vacancy.company_id == company_id)
@@ -201,7 +424,8 @@ def list_vacancies(
         pattern = f"%{search}%"
         query = query.filter(or_(Created_Vacancy.job_name.ilike(pattern), Created_Vacancy.tag.ilike(pattern)))
 
-    return query.order_by(Created_Vacancy.start_date.desc()).offset(offset).limit(limit).all()
+    vacancies = query.order_by(Created_Vacancy.start_date.desc()).offset(offset).limit(limit).all()
+    return [_admin_vacancy_out(vacancy) for vacancy in vacancies]
 
 
 @router.get("/vacancies/{vacancy_id}", response_model=AdminVacancyOut)
@@ -210,10 +434,15 @@ def get_vacancy(
     db: Session = Depends(get_db),
     admin_user: User = Depends(require_admin)
 ):
-    vacancy = db.query(Created_Vacancy).filter(Created_Vacancy.id == vacancy_id).first()
+    vacancy = (
+        db.query(Created_Vacancy)
+        .options(joinedload(Created_Vacancy.company))
+        .filter(Created_Vacancy.id == vacancy_id)
+        .first()
+    )
     if not vacancy:
         raise HTTPException(status_code=404, detail="Vacancy not found")
-    return vacancy
+    return _admin_vacancy_out(vacancy)
 
 
 @router.get("/vacancies/{vacancy_id}/candidates", response_model=List[AdminCandidateOut])
@@ -225,12 +454,20 @@ def list_vacancy_candidates(
     db: Session = Depends(get_db),
     admin_user: User = Depends(require_admin)
 ):
-    query = db.query(Candidate).filter(Candidate.vacancy_id == vacancy_id)
+    query = (
+        db.query(Candidate)
+        .options(
+            joinedload(Candidate.user),
+            joinedload(Candidate.vacancy).joinedload(Created_Vacancy.company),
+        )
+        .filter(Candidate.vacancy_id == vacancy_id)
+    )
 
     if status_filter:
         query = query.filter(Candidate.status == status_filter)
 
-    return query.order_by(Candidate.created_at.desc()).offset(offset).limit(limit).all()
+    candidates = query.order_by(Candidate.created_at.desc()).offset(offset).limit(limit).all()
+    return [_admin_candidate_out(candidate) for candidate in candidates]
 
 
 @router.get("/candidates", response_model=List[AdminCandidateOut])
@@ -243,7 +480,10 @@ def list_candidates(
     db: Session = Depends(get_db),
     admin_user: User = Depends(require_admin)
 ):
-    query = db.query(Candidate)
+    query = db.query(Candidate).options(
+        joinedload(Candidate.user),
+        joinedload(Candidate.vacancy).joinedload(Created_Vacancy.company),
+    )
 
     if status_filter:
         query = query.filter(Candidate.status == status_filter)
@@ -253,7 +493,8 @@ def list_candidates(
         pattern = f"%{search}%"
         query = query.filter(or_(Candidate.full_name.ilike(pattern), Candidate.skills.ilike(pattern)))
 
-    return query.order_by(Candidate.created_at.desc()).offset(offset).limit(limit).all()
+    candidates = query.order_by(Candidate.created_at.desc()).offset(offset).limit(limit).all()
+    return [_admin_candidate_out(candidate) for candidate in candidates]
 
 
 @router.patch("/candidates/{candidate_id}/status", response_model=AdminCandidateOut)
@@ -263,14 +504,22 @@ def update_candidate_status(
     db: Session = Depends(get_db),
     admin_user: User = Depends(require_admin)
 ):
-    candidate = db.query(Candidate).filter(Candidate.id == candidate_id).first()
+    candidate = (
+        db.query(Candidate)
+        .options(
+            joinedload(Candidate.user),
+            joinedload(Candidate.vacancy).joinedload(Created_Vacancy.company),
+        )
+        .filter(Candidate.id == candidate_id)
+        .first()
+    )
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
 
     candidate.status = update_data.status
     db.commit()
     db.refresh(candidate)
-    return candidate
+    return _admin_candidate_out(candidate)
 
 
 # Questions
@@ -321,6 +570,7 @@ def get_question(
         "category": question.category,
         "options": question.options,
         "correct_answer": str(question.correct_answer),
+        "correct_answer_text": _option_text(question, question.correct_answer),
         "difficulty_level": question.difficulty_level,
         "points": question.points,
     }
@@ -364,12 +614,28 @@ def list_question_history(
     db: Session = Depends(get_db),
     admin_user: User = Depends(require_admin)
 ):
-    return (
+    history_items = (
         db.query(QuestionHistory)
+        .options(joinedload(QuestionHistory.question))
         .filter(QuestionHistory.question_id == question_id)
         .order_by(QuestionHistory.changed_at.desc())
         .all()
     )
+    changed_by_ids = [history.changed_by for history in history_items if history.changed_by]
+    changed_by_users = (
+        db.query(User).filter(User.id.in_(changed_by_ids)).all()
+        if changed_by_ids
+        else []
+    )
+    changed_by_user_by_id = {str(user.id): user for user in changed_by_users}
+
+    return [
+        _admin_question_history_out(
+            history,
+            changed_by_user_by_id.get(str(history.changed_by)),
+        )
+        for history in history_items
+    ]
 
 
 # Practices and assignments
@@ -390,7 +656,8 @@ def list_practices(
         pattern = f"%{search}%"
         query = query.filter(or_(Practice.title.ilike(pattern), Practice.description.ilike(pattern)))
 
-    return query.order_by(Practice.created_at.desc()).offset(offset).limit(limit).all()
+    practices = query.order_by(Practice.created_at.desc()).offset(offset).limit(limit).all()
+    return _admin_practices_out(db, practices)
 
 
 @router.get("/practices/{practice_id}", response_model=PracticeOut)
@@ -402,7 +669,7 @@ def get_practice(
     practice = db.query(Practice).filter(Practice.practice_id == practice_id).first()
     if not practice:
         raise HTTPException(status_code=404, detail="Practice not found")
-    return practice
+    return _admin_practices_out(db, [practice])[0]
 
 
 @router.get("/practices/{practice_id}/questions")
@@ -475,7 +742,7 @@ def update_practice(
 
     db.commit()
     db.refresh(practice)
-    return practice
+    return _admin_practices_out(db, [practice])[0]
 
 
 @router.get("/practices/{practice_id}/assignments", response_model=List[PracticeAssignmentOut])
@@ -490,7 +757,8 @@ def list_practice_assignments(
     if is_completed is not None:
         query = query.filter(PracticeAssignment.is_completed == is_completed)
 
-    return query.order_by(PracticeAssignment.assigned_at.desc()).all()
+    assignments = query.order_by(PracticeAssignment.assigned_at.desc()).all()
+    return _admin_assignments_out(db, assignments)
 
 
 @router.patch("/practices/{practice_id}/assignments")
@@ -553,7 +821,10 @@ def list_test_sessions(
     db: Session = Depends(get_db),
     admin_user: User = Depends(require_admin)
 ):
-    query = db.query(TestSession)
+    query = db.query(TestSession).options(
+        joinedload(TestSession.practice),
+        joinedload(TestSession.user),
+    )
 
     if is_finished is not None:
         query = query.filter(TestSession.is_finished == is_finished)
@@ -562,7 +833,8 @@ def list_test_sessions(
     if practice_id:
         query = query.filter(TestSession.practice_id == practice_id)
 
-    return query.order_by(TestSession.started_time.desc()).offset(offset).limit(limit).all()
+    sessions = query.order_by(TestSession.started_time.desc()).offset(offset).limit(limit).all()
+    return [_admin_test_session_out(session) for session in sessions]
 
 
 @router.get("/test-sessions/{session_id}", response_model=AdminTestSessionOut)
@@ -571,10 +843,18 @@ def get_test_session(
     db: Session = Depends(get_db),
     admin_user: User = Depends(require_admin)
 ):
-    session = db.query(TestSession).filter(TestSession.session_id == session_id).first()
+    session = (
+        db.query(TestSession)
+        .options(
+            joinedload(TestSession.practice),
+            joinedload(TestSession.user),
+        )
+        .filter(TestSession.session_id == session_id)
+        .first()
+    )
     if not session:
         raise HTTPException(status_code=404, detail="Test session not found")
-    return session
+    return _admin_test_session_out(session)
 
 
 @router.get("/test-sessions/{session_id}/answers", response_model=List[AdminUserAnswerOut])
@@ -583,9 +863,18 @@ def list_test_session_answers(
     db: Session = Depends(get_db),
     admin_user: User = Depends(require_admin)
 ):
-    return (
+    answers = (
         db.query(UserAnswer)
         .filter(UserAnswer.session_id == session_id)
         .order_by(UserAnswer.id.asc())
         .all()
     )
+    question_ids = [answer.question_id for answer in answers if answer.question_id]
+    questions = (
+        db.query(Question).filter(Question.id.in_(question_ids)).all()
+        if question_ids
+        else []
+    )
+    question_by_id = {str(question.id): question for question in questions}
+
+    return [_admin_answer_out(answer, question_by_id) for answer in answers]
