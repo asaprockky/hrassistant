@@ -43,7 +43,7 @@ app.include_router(tester_main.router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://admin-talent-flow.vercel.app"
+        "https://admin-talent-flow.vercel.app",
         "http://localhost:3000",
         "http://localhost:5173",
         "https://hr-assistant-j2u1.vercel.app",
