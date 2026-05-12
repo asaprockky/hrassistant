@@ -34,10 +34,13 @@ class CandidateCreatedResponse(BaseModel):
     group_name: Optional[str]
 
 class AdvancedAssignmentUpdate(BaseModel):
-    add_user_ids: List[uuid.UUID] = []
-    add_groups: List[str] = []
-    remove_user_ids: List[uuid.UUID] = []
-    remove_groups: List[str] = []
+    add_user_ids: List[uuid.UUID] = Field(default_factory=list)
+    add_groups: List[str] = Field(default_factory=list)
+    remove_user_ids: List[uuid.UUID] = Field(default_factory=list)
+    remove_groups: List[str] = Field(default_factory=list)
+    send_invitation: bool = False
+    frontend_test_base_url: Optional[str] = None
+    invitation_message: Optional[str] = None
 
         
 class TestSessionItem(BaseModel):
@@ -144,6 +147,28 @@ class OptionSchema(BaseModel):
     id: uuid.UUID
     text: str
 
+class QuestionOptionCreate(BaseModel):
+    id: Optional[uuid.UUID] = None
+    text: str = Field(..., min_length=1)
+
+class QuestionCreate(BaseModel):
+    text: str = Field(..., min_length=1)
+    options: List[QuestionOptionCreate] = Field(..., min_length=2)
+    correct_answer: Optional[uuid.UUID] = None
+    correct_option_index: Optional[int] = Field(None, ge=0)
+    difficulty_level: float = Field(0.5, ge=0, le=1)
+    category: Optional[str] = None
+    points: float = Field(1.0, gt=0)
+
+class QuestionUpdate(BaseModel):
+    text: Optional[str] = Field(None, min_length=1)
+    options: Optional[List[QuestionOptionCreate]] = Field(None, min_length=2)
+    correct_answer: Optional[uuid.UUID] = None
+    correct_option_index: Optional[int] = Field(None, ge=0)
+    difficulty_level: Optional[float] = Field(None, ge=0, le=1)
+    category: Optional[str] = None
+    points: Optional[float] = Field(None, gt=0)
+
 class QuestionHistoryOut(BaseORMModel):
     id: uuid.UUID
     question_id: uuid.UUID
@@ -210,6 +235,27 @@ class AdminDashboardSummary(BaseModel):
     completed_test_sessions: int
     average_test_score: int
 
+class AdminStudentStats(BaseModel):
+    id: uuid.UUID
+    username: str
+    name: str
+    surname: str
+    email: Optional[EmailStr] = None
+    group_name: Optional[str] = None
+    assigned_tests: int
+    completed_assignments: int
+    pending_assignments: int
+    active_sessions: int
+    completed_sessions: int
+    average_score: int
+    last_activity_at: Optional[datetime] = None
+
+class AdminStudentStatsResponse(BaseModel):
+    items: List[AdminStudentStats]
+    total: int
+    offset: int
+    limit: int
+
 class AdminUserOut(BaseORMModel):
     id: uuid.UUID
     username: str
@@ -219,7 +265,64 @@ class AdminUserOut(BaseORMModel):
     age: int
     email: Optional[EmailStr] = None
     company_id: Optional[uuid.UUID] = None
-    company_name: Optional[str] = None
+    group_name: Optional[str] = None
+
+class AdminUserCreate(BaseModel):
+    username: Optional[str] = Field(None, max_length=30)
+    password: Optional[str] = Field(None, min_length=4)
+    role: Role = Role.USER
+    name: str = Field(..., max_length=30)
+    surname: str = Field(..., max_length=30)
+    age: int = Field(..., ge=0)
+    email: Optional[EmailStr] = None
+    company_id: Optional[uuid.UUID] = None
+    group_name: Optional[str] = Field(None, max_length=50)
+    practice_id: Optional[uuid.UUID] = None
+    send_invitation: bool = False
+    frontend_test_base_url: Optional[str] = None
+
+class AdminBulkUserCreateItem(BaseModel):
+    username: Optional[str] = Field(None, max_length=30)
+    name: str = Field(..., max_length=30)
+    surname: str = Field(..., max_length=30)
+    age: int = Field(18, ge=0)
+    email: EmailStr
+    group_name: Optional[str] = Field(None, max_length=50)
+
+class AdminBulkUserCreate(BaseModel):
+    users: List[AdminBulkUserCreateItem] = Field(..., min_length=1)
+    role: Role = Role.USER
+    company_id: Optional[uuid.UUID] = None
+    group_name: Optional[str] = Field(None, max_length=50)
+    practice_id: Optional[uuid.UUID] = None
+    send_invitation: bool = True
+    skip_existing: bool = True
+    frontend_test_base_url: Optional[str] = None
+
+class AdminUserCreatedOut(BaseModel):
+    id: uuid.UUID
+    username: str
+    password: Optional[str] = None
+    email: Optional[EmailStr] = None
+    group_name: Optional[str] = None
+    assigned_practice_id: Optional[uuid.UUID] = None
+    invitation_sent: bool = False
+    invitation_error: Optional[str] = None
+    already_existed: bool = False
+
+class AdminBulkUserCreateResponse(BaseModel):
+    created: List[AdminUserCreatedOut]
+    existing: List[AdminUserCreatedOut]
+    failed: List[dict] = Field(default_factory=list)
+    created_count: int
+    existing_count: int
+    failed_count: int
+
+class AdminUserSearchResponse(BaseModel):
+    items: List[AdminUserOut]
+    total: int
+    offset: int
+    limit: int
 
 class AdminVacancyOut(BaseORMModel):
     id: uuid.UUID
@@ -232,6 +335,24 @@ class AdminVacancyOut(BaseORMModel):
     company_name: Optional[str] = None
     candidate_count: Optional[int] = 0
     is_available: Optional[bool] = True
+
+class AdminVacancyCreate(BaseModel):
+    job_name: str = Field(..., max_length=100)
+    job_description: str
+    tag: str
+    start_date: date
+    end_date: date
+    company_id: Optional[uuid.UUID] = None
+    is_available: bool = True
+
+class AdminVacancyUpdate(BaseModel):
+    job_name: Optional[str] = Field(None, max_length=100)
+    job_description: Optional[str] = None
+    tag: Optional[str] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    company_id: Optional[uuid.UUID] = None
+    is_available: Optional[bool] = None
 
 class AdminCandidateOut(BaseORMModel):
     id: uuid.UUID
@@ -284,6 +405,27 @@ class PracticeAssignmentOut(BaseORMModel):
     assigned_at: datetime
     is_completed: bool
     completed_at: Optional[datetime] = None
+
+class PracticeAssignmentResult(BaseModel):
+    added: int
+    removed: int
+    skipped_existing: int
+    invitation_sent: int
+    invitation_failed: int
+    invitation_errors: List[str] = Field(default_factory=list)
+
+class PracticeInvitationRequest(BaseModel):
+    user_ids: List[uuid.UUID] = Field(default_factory=list)
+    groups: List[str] = Field(default_factory=list)
+    include_completed: bool = False
+    frontend_test_base_url: Optional[str] = None
+    invitation_message: Optional[str] = None
+
+class PracticeInvitationResult(BaseModel):
+    targeted: int
+    sent: int
+    failed: int
+    errors: List[str] = Field(default_factory=list)
 
 class AdminTestSessionOut(BaseORMModel):
     session_id: uuid.UUID
