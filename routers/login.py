@@ -156,7 +156,7 @@ def login(
         httponly=True,
         secure=False, # Set to True if using HTTPS
         samesite="lax",
-        max_age=604800,
+        max_age=6048000,
     )
 
     # 5. Return Token AND User Profile Data
@@ -191,7 +191,6 @@ def register_user(user_data: UserCreate, response: Response, db: Session = Depen
         username=user_data.username,
         role=user_data.role,
         password=hashed_pwd,
-        # Map the new profile fields
         name=user_data.name,
         surname=user_data.surname,
         age=user_data.age,
