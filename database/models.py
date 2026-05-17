@@ -154,8 +154,13 @@ class PracticeAssignment(Base):
     is_completed = Column(Boolean, default=False)
     completed_at = Column(DateTime, nullable=True)
 
+    # Association-object relationships. The `overlaps` directive silences the
+    # SQLAlchemy warning about overlapping with Practice.allowed_users (which
+    # uses this table as `secondary`).
+    user = relationship("User", overlaps="allowed_users,assigned_practices")
+    practice = relationship("Practice", overlaps="allowed_users,assigned_practices")
 
-    
+
 class TestSession(Base):
     __tablename__ = "test_session"
     session_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
