@@ -207,7 +207,11 @@ def verify_email_code(
 # to StartedTest), you must manually delete your old database file (e.g., 'test.db')
 # and run this script again to apply the new schema OR use the quick_update_schema
 # function below for incremental changes.
-Base.metadata.create_all(bind=engine)
+#
+# NOTE: Calling Base.metadata.create_all(...) at import time forces a round
+# trip to Postgres for every worker that imports this module, which slows
+# cold starts. Schema management belongs in Alembic migrations, so we keep
+# the helper available but no longer run it implicitly.
 
 
 

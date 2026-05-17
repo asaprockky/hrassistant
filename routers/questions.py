@@ -82,6 +82,8 @@ async def testing_websocket(
     await websocket.accept()
     user_id = current_user.id
     session_id = None  # Tracks the active session for this connection
+    practice_cache: Optional[Practice] = None  # Cached per-connection
+    total_weight_cache: Optional[float] = None  # Cached per-connection
 
     try:
         while True:
@@ -154,19 +156,32 @@ async def testing_websocket(
                     continue
 
                 practice = db.query(Practice).filter(Practice.practice_id == practice_id).first()
-                answered_uuids = db.query(UserAnswer.question_id).filter(UserAnswer.session_id == session_id).all()
-                answered_ids_str = [str(aid[0]) for aid in answered_uuids]
 
                 next_question = None
                 if practice and practice.question_ids:
-                    for q_id in practice.question_ids:
-                        if str(q_id) in answered_ids_str:
-                            continue
+                    answered_ids = {
+                        row[0]
+                        for row in db.query(UserAnswer.question_id)
+                        .filter(UserAnswer.session_id == session_id)
+                        .all()
+                    }
 
-                        question_obj = db.query(Question).filter(Question.id == q_id).first()
-                        if question_obj:
-                            next_question = question_obj
-                            break
+                    remaining_ids = [q for q in practice.question_ids if q not in answered_ids]
+
+                    if remaining_ids:
+                        # Single trip to fetch all remaining questions, then
+                        # pick the one matching the practice's ordering.
+                        questions_by_id = {
+                            q.id: q
+                            for q in db.query(Question)
+                            .filter(Question.id.in_(remaining_ids))
+                            .all()
+                        }
+                        for q_id in remaining_ids:
+                            candidate = questions_by_id.get(q_id)
+                            if candidate:
+                                next_question = candidate
+                                break
 
                 if not next_question:
                     await handle_finish_test(session_id, user_id, practice_id, db, websocket)
@@ -190,25 +205,47 @@ async def testing_websocket(
                 user_ans = str(data.get("user_answer"))
                 time_spent = data.get("time_spent", 0)
 
+                # Cache Practice once per WS connection — it never changes
+                # mid-test and the original code re-fetched it per answer.
+                if practice_cache is None:
+                    practice_cache = (
+                        db.query(Practice)
+                        .filter(Practice.practice_id == practice_id)
+                        .first()
+                    )
+                practice = practice_cache
+
+                # Cache total_weight for the practice — was re-summed per
+                # answer. The set of question_ids doesn't change mid-test.
+                if total_weight_cache is None:
+                    if practice and practice.question_ids:
+                        total_weight_cache = (
+                            db.query(func.sum(Question.points))
+                            .filter(Question.id.in_(practice.question_ids))
+                            .scalar()
+                            or 1
+                        )
+                    else:
+                        total_weight_cache = 1
+                total_weight = total_weight_cache
+
                 question = db.query(Question).filter(Question.id == q_id).first()
                 if not question:
                     await websocket.send_json({"error": "Question not found."})
                     continue
 
-                existing_answer = db.query(UserAnswer).filter(
-                    UserAnswer.session_id == session_id,
-                    UserAnswer.question_id == question.id
-                ).first()
+                existing_answer = (
+                    db.query(UserAnswer.id)
+                    .filter(
+                        UserAnswer.session_id == session_id,
+                        UserAnswer.question_id == question.id,
+                    )
+                    .first()
+                )
 
                 if existing_answer:
                     await websocket.send_json({"error": "Question already answered."})
                     continue
-
-                practice = db.query(Practice).filter(Practice.practice_id == practice_id).first()
-                total_weight = 1
-                if practice.question_ids:
-                    total_weight = db.query(func.sum(Question.points)) \
-                        .filter(Question.id.in_(practice.question_ids)).scalar() or 1
 
                 is_correct = str(question.correct_answer) == user_ans
                 points_awarded = (question.points / total_weight) * 100 if is_correct else 0.0
@@ -242,9 +279,15 @@ async def testing_websocket(
 
                 db.commit()
 
-                # Check if finished
-                answered_count = db.query(UserAnswer).filter(UserAnswer.session_id == session_id).count()
-                if answered_count >= len(practice.question_ids):
+                # Check if finished — use a lightweight COUNT(*) query on the
+                # primary key column rather than counting ORM-loaded rows.
+                answered_count = (
+                    db.query(func.count(UserAnswer.id))
+                    .filter(UserAnswer.session_id == session_id)
+                    .scalar()
+                ) or 0
+                total_questions = len(practice.question_ids) if practice and practice.question_ids else 0
+                if total_questions and answered_count >= total_questions:
                     await handle_finish_test(session_id, user_id, practice_id, db, websocket)
                 else:
                     await websocket.send_json({
@@ -309,6 +352,19 @@ def get_assigned_tests(
 ):
     now = datetime.now(timezone.utc).replace(tzinfo=None)
 
+    # Resolve the limit *before* the query so we can push it into SQL
+    # instead of pulling every matching row and slicing in Python.
+    sql_limit: Optional[int] = None
+    if filter_option == "latest":
+        sql_limit = 1
+    elif filter_option == "all":
+        sql_limit = None
+    else:
+        try:
+            sql_limit = int(filter_option)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid filter option.")
+
     query = (
         db.query(Practice)
         .join(PracticeAssignment, Practice.practice_id == PracticeAssignment.practice_id)
@@ -326,6 +382,9 @@ def get_assigned_tests(
         .order_by(Practice.deadline.asc())
     )
 
+    if sql_limit is not None:
+        query = query.limit(sql_limit)
+
     def format_assessment(p: Practice):
         return {
             "practiceId": str(p.practice_id),
@@ -341,11 +400,4 @@ def get_assigned_tests(
 
     if filter_option == "latest":
         return results[0] if results else None
-    elif filter_option == "all":
-        return results
-    else:
-        try:
-            limit = int(filter_option)
-            return results[:limit]
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid filter option.")
+    return results

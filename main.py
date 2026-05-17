@@ -1,5 +1,5 @@
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import FastAPI, Depends
+from fastapi import FastAPI, Depends, Query
 from sqlalchemy.orm import Session
 
 from database.database import SessionLocal
@@ -62,8 +62,20 @@ def get_data():
         db.close()
 
 @app.get("/users", tags=["Users"])
-def list_users(db: Session = Depends(get_data)):
-    return db.query(User).all()
+def list_users(
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=500),
+    db: Session = Depends(get_data),
+):
+    # Previously returned every User row in the system — fine with 10 rows,
+    # painful with thousands. Default page is bounded.
+    return (
+        db.query(User)
+        .order_by(User.surname.asc(), User.name.asc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
 
 @app.get("/health/ping", tags=["Health"])
 def ping():

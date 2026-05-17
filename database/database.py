@@ -13,12 +13,26 @@ DATABASE_URL = "postgresql://postgres.wzdcbbbqjaledjfraolq:14042005Fayz.%24@aws-
 #DATABASE_URL = "postgresql://asap:pzzPoFUjWFYEfblTYFRW8P46AMC7P6Yr@dpg-d4lfcl3e5dus73foo3i0-a.oregon-postgres.render.com/hrassistant_2k4y"
 
 # Create SQLAlchemy engine
+# Pool tuning:
+# - pool_pre_ping recycles dead connections (important when the DB sits behind
+#   a transaction pooler like Supabase/PgBouncer that can drop sockets).
+# - pool_recycle prevents stale connections from being reused after long idle.
+# - pool_size / max_overflow keep us within the pooler's connection budget
+#   while still allowing burst concurrency.
 if DATABASE_URL.startswith("sqlite"):
     engine = create_engine(
-        DATABASE_URL, connect_args={"check_same_thread": False}
+        DATABASE_URL,
+        connect_args={"check_same_thread": False},
+        pool_pre_ping=True,
     )
 else:
-    engine = create_engine(DATABASE_URL)  # PostgreSQL does NOT need connect_args
+    engine = create_engine(
+        DATABASE_URL,
+        pool_pre_ping=True,
+        pool_recycle=300,
+        pool_size=10,
+        max_overflow=20,
+    )
 
 
 # Create a configured "Session" class
