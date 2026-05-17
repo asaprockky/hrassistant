@@ -2,7 +2,7 @@ from datetime import date, datetime
 from typing import List, Optional
 import uuid
 from database.enums import Role
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, computed_field
 
 
 
@@ -206,11 +206,11 @@ class TestStatusResponse(BaseModel):
     is_test_finished: bool
 
 class PracticeCreate(BaseModel):
-    title: str
+    title: str = Field(..., min_length=1)
     description: Optional[str] = None
-    duration_minutes: int
+    duration_minutes: int = Field(..., gt=0)
     deadline: datetime
-    question_ids: List[uuid.UUID]
+    question_ids: List[uuid.UUID] = Field(..., min_length=1)
     tags: List[str] = []
 
 class AssignmentUpdate(BaseModel):
@@ -219,6 +219,61 @@ class AssignmentUpdate(BaseModel):
 
 
 # --- Admin Panel Schemas ---
+
+# Lightweight reference schemas used for nesting context into list/detail
+# responses. The admin UI shouldn't have to do a second lookup just to render
+# a company / user / vacancy / practice name.
+
+class CompanyRef(BaseORMModel):
+    id: uuid.UUID
+    name: str
+    email: Optional[EmailStr] = None
+    phone_number: Optional[str] = None
+    INN: Optional[str] = None
+
+
+class UserRef(BaseORMModel):
+    id: uuid.UUID
+    username: str
+    name: str
+    surname: str
+    email: Optional[EmailStr] = None
+    role: Role
+    group_name: Optional[str] = None
+    company_id: Optional[uuid.UUID] = None
+
+    @computed_field
+    @property
+    def full_name(self) -> str:
+        return f"{self.name} {self.surname}".strip()
+
+
+class VacancyRef(BaseORMModel):
+    id: uuid.UUID
+    job_name: str
+    tag: Optional[str] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None
+    is_available: Optional[bool] = None
+    company_id: Optional[uuid.UUID] = None
+
+
+class PracticeRef(BaseORMModel):
+    practice_id: uuid.UUID
+    title: str
+    duration_minutes: int
+    deadline: datetime
+    is_valid: bool
+    tags: List[str] = Field(default_factory=list)
+
+
+class QuestionRef(BaseORMModel):
+    id: uuid.UUID
+    text: str
+    category: Optional[str] = None
+    difficulty_level: float
+    points: float
+
 
 class AdminDashboardSummary(BaseModel):
     total_users: int
@@ -239,6 +294,8 @@ class AdminStudentStats(BaseModel):
     surname: str
     email: Optional[EmailStr] = None
     group_name: Optional[str] = None
+    company_id: Optional[uuid.UUID] = None
+    company: Optional[CompanyRef] = None
     assigned_tests: int
     completed_assignments: int
     pending_assignments: int
@@ -246,6 +303,11 @@ class AdminStudentStats(BaseModel):
     completed_sessions: int
     average_score: int
     last_activity_at: Optional[datetime] = None
+
+    @computed_field
+    @property
+    def full_name(self) -> str:
+        return f"{self.name} {self.surname}".strip()
 
 class AdminStudentStatsResponse(BaseModel):
     items: List[AdminStudentStats]
@@ -262,7 +324,23 @@ class AdminUserOut(BaseORMModel):
     age: int
     email: Optional[EmailStr] = None
     company_id: Optional[uuid.UUID] = None
+    company: Optional[CompanyRef] = None
     group_name: Optional[str] = None
+
+    @computed_field
+    @property
+    def full_name(self) -> str:
+        return f"{self.name} {self.surname}".strip()
+
+
+class AdminUserDetail(AdminUserOut):
+    assigned_practices: int = 0
+    completed_practices: int = 0
+    active_sessions: int = 0
+    completed_sessions: int = 0
+    average_score: int = 0
+    last_activity_at: Optional[datetime] = None
+
 
 class AdminUserCreate(BaseModel):
     username: Optional[str] = Field(None, max_length=30)
@@ -277,6 +355,30 @@ class AdminUserCreate(BaseModel):
     practice_id: Optional[uuid.UUID] = None
     send_invitation: bool = False
     frontend_test_base_url: Optional[str] = None
+
+
+class AdminUserUpdate(BaseModel):
+    name: Optional[str] = Field(None, max_length=30)
+    surname: Optional[str] = Field(None, max_length=30)
+    age: Optional[int] = Field(None, ge=0)
+    email: Optional[EmailStr] = None
+    role: Optional[Role] = None
+    company_id: Optional[uuid.UUID] = None
+    group_name: Optional[str] = Field(None, max_length=50)
+
+
+class AdminUserPasswordReset(BaseModel):
+    new_password: Optional[str] = Field(None, min_length=4)
+    notify_user: bool = False
+
+
+class AdminUserPasswordResetResult(BaseModel):
+    id: uuid.UUID
+    username: str
+    password: str
+    notification_sent: bool = False
+    notification_error: Optional[str] = None
+
 
 class AdminBulkUserCreateItem(BaseModel):
     username: Optional[str] = Field(None, max_length=30)
@@ -321,6 +423,14 @@ class AdminUserSearchResponse(BaseModel):
     offset: int
     limit: int
 
+
+class AdminPagedUsers(BaseModel):
+    items: List[AdminUserOut]
+    total: int
+    offset: int
+    limit: int
+
+
 class AdminVacancyOut(BaseORMModel):
     id: uuid.UUID
     job_name: str
@@ -329,31 +439,49 @@ class AdminVacancyOut(BaseORMModel):
     start_date: date
     end_date: date
     company_id: Optional[uuid.UUID] = None
+    company: Optional[CompanyRef] = None
     candidate_count: Optional[int] = 0
     is_available: Optional[bool] = True
+    status: Optional[str] = None
+
+
+class AdminVacancyDetail(AdminVacancyOut):
+    candidate_status_breakdown: dict = Field(default_factory=dict)
+
 
 class AdminVacancyCreate(BaseModel):
-    job_name: str = Field(..., max_length=100)
-    job_description: str
-    tag: str
+    job_name: str = Field(..., max_length=100, min_length=1)
+    job_description: str = Field(..., min_length=1)
+    tag: str = Field(..., min_length=1)
     start_date: date
     end_date: date
     company_id: Optional[uuid.UUID] = None
     is_available: bool = True
 
 class AdminVacancyUpdate(BaseModel):
-    job_name: Optional[str] = Field(None, max_length=100)
-    job_description: Optional[str] = None
-    tag: Optional[str] = None
+    job_name: Optional[str] = Field(None, max_length=100, min_length=1)
+    job_description: Optional[str] = Field(None, min_length=1)
+    tag: Optional[str] = Field(None, min_length=1)
     start_date: Optional[date] = None
     end_date: Optional[date] = None
     company_id: Optional[uuid.UUID] = None
     is_available: Optional[bool] = None
 
+
+class AdminPagedVacancies(BaseModel):
+    items: List[AdminVacancyOut]
+    total: int
+    offset: int
+    limit: int
+
+
 class AdminCandidateOut(BaseORMModel):
     id: uuid.UUID
     user_id: uuid.UUID
+    user: Optional[UserRef] = None
     vacancy_id: Optional[uuid.UUID] = None
+    vacancy: Optional[VacancyRef] = None
+    company: Optional[CompanyRef] = None
     full_name: str
     status: str
     resume_loc: str
@@ -363,8 +491,39 @@ class AdminCandidateOut(BaseORMModel):
     experience: Optional[str] = None
     skills: Optional[str] = None
 
+
+class AdminCandidateCreate(BaseModel):
+    user_id: uuid.UUID
+    vacancy_id: uuid.UUID
+    full_name: Optional[str] = Field(None, max_length=100)
+    resume_loc: str = Field(..., max_length=255)
+    ai_score: float = Field(0.0, ge=0)
+    status: str = Field("Applied", max_length=50)
+    education: Optional[str] = Field(None, max_length=255)
+    experience: Optional[str] = Field(None, max_length=255)
+    skills: Optional[str] = Field(None, max_length=255)
+
+
+class AdminCandidateUpdate(BaseModel):
+    full_name: Optional[str] = Field(None, max_length=100)
+    resume_loc: Optional[str] = Field(None, max_length=255)
+    ai_score: Optional[float] = Field(None, ge=0)
+    status: Optional[str] = Field(None, max_length=50)
+    education: Optional[str] = Field(None, max_length=255)
+    experience: Optional[str] = Field(None, max_length=255)
+    skills: Optional[str] = Field(None, max_length=255)
+
+
 class CandidateStatusUpdate(BaseModel):
-    status: str
+    status: str = Field(..., min_length=1, max_length=50)
+
+
+class AdminPagedCandidates(BaseModel):
+    items: List[AdminCandidateOut]
+    total: int
+    offset: int
+    limit: int
+
 
 class PracticeOut(BaseORMModel):
     practice_id: uuid.UUID
@@ -376,23 +535,55 @@ class PracticeOut(BaseORMModel):
     tags: List[str]
     is_valid: bool
     created_at: datetime
+    question_count: Optional[int] = None
+    assignment_count: Optional[int] = None
+    completed_count: Optional[int] = None
+
+
+class PracticeDetail(PracticeOut):
+    questions: List[QuestionRef] = Field(default_factory=list)
+    active_sessions: Optional[int] = None
+    finished_sessions: Optional[int] = None
+    average_score: Optional[float] = None
+
 
 class PracticeUpdate(BaseModel):
-    title: Optional[str] = None
+    title: Optional[str] = Field(None, min_length=1)
     description: Optional[str] = None
-    duration_minutes: Optional[int] = None
+    duration_minutes: Optional[int] = Field(None, gt=0)
     deadline: Optional[datetime] = None
-    question_ids: Optional[List[uuid.UUID]] = None
+    question_ids: Optional[List[uuid.UUID]] = Field(None, min_length=1)
     tags: Optional[List[str]] = None
     is_valid: Optional[bool] = None
+
+
+class AdminPagedPractices(BaseModel):
+    items: List[PracticeOut]
+    total: int
+    offset: int
+    limit: int
+
 
 class PracticeAssignmentOut(BaseORMModel):
     assignment_id: uuid.UUID
     practice_id: uuid.UUID
+    practice: Optional[PracticeRef] = None
     user_id: uuid.UUID
+    user: Optional[UserRef] = None
     assigned_at: datetime
     is_completed: bool
     completed_at: Optional[datetime] = None
+    latest_session_id: Optional[uuid.UUID] = None
+    latest_score: Optional[float] = None
+    latest_session_finished: Optional[bool] = None
+
+
+class AdminPagedAssignments(BaseModel):
+    items: List[PracticeAssignmentOut]
+    total: int
+    offset: int
+    limit: int
+
 
 class PracticeAssignmentResult(BaseModel):
     added: int
@@ -415,19 +606,127 @@ class PracticeInvitationResult(BaseModel):
     failed: int
     errors: List[str] = Field(default_factory=list)
 
+
 class AdminTestSessionOut(BaseORMModel):
     session_id: uuid.UUID
     practice_id: uuid.UUID
+    practice: Optional[PracticeRef] = None
     user_id: uuid.UUID
+    user: Optional[UserRef] = None
     overall_points: float
     is_finished: bool
     started_time: datetime
+    answered_questions: Optional[int] = None
+    total_questions: Optional[int] = None
+    correct_answers: Optional[int] = None
+    status_label: Optional[str] = None
+
+
+class AdminPagedTestSessions(BaseModel):
+    items: List[AdminTestSessionOut]
+    total: int
+    offset: int
+    limit: int
+
 
 class AdminUserAnswerOut(BaseORMModel):
     id: uuid.UUID
     session_id: Optional[uuid.UUID] = None
     question_id: Optional[uuid.UUID] = None
+    question: Optional[QuestionRef] = None
+    question_text: Optional[str] = None
     user_answer: Optional[str] = None
+    user_answer_text: Optional[str] = None
+    correct_answer_id: Optional[uuid.UUID] = None
+    correct_answer_text: Optional[str] = None
     is_correct: Optional[bool] = None
     points_awarded: Optional[float] = None
     time_spent: Optional[float] = None
+
+
+class AdminPagedAnswers(BaseModel):
+    items: List[AdminUserAnswerOut]
+    total: int
+
+
+class CompanyCreate(BaseModel):
+    name: str = Field(..., max_length=50, min_length=1)
+    phone_number: Optional[str] = Field(None, max_length=20)
+    INN: Optional[str] = Field(None, max_length=20)
+    email: Optional[EmailStr] = None
+
+
+class CompanyUpdate(BaseModel):
+    name: Optional[str] = Field(None, max_length=50, min_length=1)
+    phone_number: Optional[str] = Field(None, max_length=20)
+    INN: Optional[str] = Field(None, max_length=20)
+    email: Optional[EmailStr] = None
+
+
+class CompanyDetail(CompanyOut):
+    user_count: int = 0
+    vacancy_count: int = 0
+    candidate_count: int = 0
+
+
+class AdminPagedCompanies(BaseModel):
+    items: List[CompanyOut]
+    total: int
+    offset: int
+    limit: int
+
+
+class AdminPagedQuestions(BaseModel):
+    items: List[QuestionOut]
+    total: int
+    offset: int
+    limit: int
+
+
+class AdminPagedQuestionHistory(BaseModel):
+    items: List[QuestionHistoryOut]
+    total: int
+    offset: int
+    limit: int
+
+
+class AdminDeleteResult(BaseModel):
+    id: uuid.UUID
+    deleted: bool = True
+    message: Optional[str] = None
+
+
+class AdminGroupStats(BaseModel):
+    group_name: Optional[str] = None
+    user_count: int
+
+
+class AdminGroupStatsResponse(BaseModel):
+    items: List[AdminGroupStats]
+    total: int
+
+
+class AdminActivityItem(BaseModel):
+    type: str  # "test_started", "test_finished", "user_created", "assignment_created"
+    occurred_at: datetime
+    user_id: Optional[uuid.UUID] = None
+    user: Optional[UserRef] = None
+    practice_id: Optional[uuid.UUID] = None
+    practice: Optional[PracticeRef] = None
+    score: Optional[float] = None
+    is_finished: Optional[bool] = None
+    session_id: Optional[uuid.UUID] = None
+
+
+class AdminActivityResponse(BaseModel):
+    items: List[AdminActivityItem]
+    total: int
+
+
+class AdminQuestionDifficultyResult(BaseModel):
+    id: uuid.UUID
+    text: str
+    category: Optional[str] = None
+    old_difficulty: Optional[float] = None
+    new_difficulty: float
+    change_reason: str

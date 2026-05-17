@@ -1,9 +1,9 @@
 import secrets
 import string
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from html import escape
-from typing import List, Optional, Sequence
+from typing import Iterable, List, Optional, Sequence
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from passlib.context import CryptContext
@@ -26,36 +26,68 @@ from database.models import (
 )
 from routers.login import get_current_user
 from schemas.user_schema import (
+    AdminActivityItem,
+    AdminActivityResponse,
     AdminBulkUserCreate,
     AdminBulkUserCreateResponse,
+    AdminCandidateCreate,
     AdminCandidateOut,
+    AdminCandidateUpdate,
     AdminDashboardSummary,
+    AdminDeleteResult,
+    AdminGroupStats,
+    AdminGroupStatsResponse,
+    AdminPagedAnswers,
+    AdminPagedAssignments,
+    AdminPagedCandidates,
+    AdminPagedCompanies,
+    AdminPagedPractices,
+    AdminPagedQuestionHistory,
+    AdminPagedQuestions,
+    AdminPagedTestSessions,
+    AdminPagedUsers,
+    AdminPagedVacancies,
+    AdminQuestionDifficultyResult,
     AdminStudentStatsResponse,
     AdminTestSessionOut,
     AdminUserAnswerOut,
     AdminUserCreate,
     AdminUserCreatedOut,
+    AdminUserDetail,
     AdminUserOut,
+    AdminUserPasswordReset,
+    AdminUserPasswordResetResult,
     AdminUserSearchResponse,
+    AdminUserUpdate,
     AdminVacancyCreate,
+    AdminVacancyDetail,
     AdminVacancyOut,
     AdminVacancyUpdate,
     AdvancedAssignmentUpdate,
     CandidateStatusUpdate,
+    CompanyCreate,
+    CompanyDetail,
     CompanyOut,
+    CompanyRef,
+    CompanyUpdate,
     DifficultyUpdate,
     PracticeAssignmentOut,
     PracticeAssignmentResult,
     PracticeCreate,
+    PracticeDetail,
     PracticeInvitationRequest,
     PracticeInvitationResult,
     PracticeOut,
+    PracticeRef,
     PracticeUpdate,
     QuestionCreate,
     QuestionHistoryOut,
     QuestionOptionCreate,
     QuestionOut,
+    QuestionRef,
     QuestionUpdate,
+    UserRef,
+    VacancyRef,
 )
 from utils.mailer import EmailDeliveryError, send_email
 
@@ -362,6 +394,311 @@ def serialize_created_user(
     )
 
 
+# ---------------------------------------------------------------------------
+# Serializer helpers -- keep responses enriched (no bare IDs) without
+# triggering extra DB round trips. Callers must eager-load the relations
+# referenced below or the helpers will silently leave them as null.
+# ---------------------------------------------------------------------------
+
+
+def _company_ref(company: Optional[Company]) -> Optional[CompanyRef]:
+    if not company:
+        return None
+    return CompanyRef.model_validate(company)
+
+
+def _user_ref(user: Optional[User]) -> Optional[UserRef]:
+    if not user:
+        return None
+    return UserRef.model_validate(user)
+
+
+def _vacancy_ref(vacancy: Optional[Created_Vacancy]) -> Optional[VacancyRef]:
+    if not vacancy:
+        return None
+    return VacancyRef.model_validate(vacancy)
+
+
+def _practice_ref(practice: Optional[Practice]) -> Optional[PracticeRef]:
+    if not practice:
+        return None
+    return PracticeRef.model_validate(practice)
+
+
+def _question_ref(question: Optional[Question]) -> Optional[QuestionRef]:
+    if not question:
+        return None
+    return QuestionRef.model_validate(question)
+
+
+def serialize_admin_user(user: User) -> AdminUserOut:
+    return AdminUserOut(
+        id=user.id,
+        username=user.username,
+        role=user.role,
+        name=user.name,
+        surname=user.surname,
+        age=user.age,
+        email=user.email,
+        company_id=user.company_id,
+        company=_company_ref(user.company),
+        group_name=user.group_name,
+    )
+
+
+def _derive_vacancy_status(vacancy: Created_Vacancy, today: Optional[date] = None) -> str:
+    today = today or date.today()
+    if vacancy.is_available is False:
+        return "Closed"
+    if vacancy.start_date and today < vacancy.start_date:
+        return "Upcoming"
+    if vacancy.end_date and today > vacancy.end_date:
+        return "Expired"
+    return "Open"
+
+
+def serialize_admin_vacancy(
+    vacancy: Created_Vacancy,
+    candidate_count: Optional[int] = None,
+    today: Optional[date] = None,
+) -> AdminVacancyOut:
+    return AdminVacancyOut(
+        id=vacancy.id,
+        job_name=vacancy.job_name,
+        job_description=vacancy.job_description,
+        tag=vacancy.tag,
+        start_date=vacancy.start_date,
+        end_date=vacancy.end_date,
+        company_id=vacancy.company_id,
+        company=_company_ref(vacancy.company),
+        candidate_count=candidate_count if candidate_count is not None else (vacancy.candidate_count or 0),
+        is_available=vacancy.is_available,
+        status=_derive_vacancy_status(vacancy, today=today),
+    )
+
+
+def _candidate_count_map(db: Session, vacancy_ids: Sequence[uuid.UUID]) -> dict[uuid.UUID, int]:
+    if not vacancy_ids:
+        return {}
+    rows = (
+        db.query(Candidate.vacancy_id, func.count(Candidate.id))
+        .filter(Candidate.vacancy_id.in_(list(vacancy_ids)))
+        .group_by(Candidate.vacancy_id)
+        .all()
+    )
+    return {row[0]: int(row[1]) for row in rows}
+
+
+def serialize_admin_candidate(candidate: Candidate) -> AdminCandidateOut:
+    vacancy = candidate.vacancy
+    company = vacancy.company if vacancy else None
+    return AdminCandidateOut(
+        id=candidate.id,
+        user_id=candidate.user_id,
+        user=_user_ref(candidate.user),
+        vacancy_id=candidate.vacancy_id,
+        vacancy=_vacancy_ref(vacancy),
+        company=_company_ref(company),
+        full_name=candidate.full_name,
+        status=candidate.status,
+        resume_loc=candidate.resume_loc,
+        ai_score=candidate.ai_score,
+        created_at=candidate.created_at,
+        education=candidate.education,
+        experience=candidate.experience,
+        skills=candidate.skills,
+    )
+
+
+def _practice_counts_map(
+    db: Session,
+    practice_ids: Sequence[uuid.UUID],
+) -> dict[uuid.UUID, tuple[int, int]]:
+    """Return {practice_id: (assignment_count, completed_count)} in one trip."""
+    if not practice_ids:
+        return {}
+    rows = (
+        db.query(
+            PracticeAssignment.practice_id,
+            func.count(PracticeAssignment.assignment_id).label("assigned"),
+            func.count(case((PracticeAssignment.is_completed == True, 1))).label("completed"),
+        )
+        .filter(PracticeAssignment.practice_id.in_(list(practice_ids)))
+        .group_by(PracticeAssignment.practice_id)
+        .all()
+    )
+    return {row.practice_id: (int(row.assigned), int(row.completed)) for row in rows}
+
+
+def serialize_practice(
+    practice: Practice,
+    assignment_count: Optional[int] = None,
+    completed_count: Optional[int] = None,
+) -> PracticeOut:
+    return PracticeOut(
+        practice_id=practice.practice_id,
+        title=practice.title,
+        description=practice.description,
+        duration_minutes=practice.duration_minutes,
+        deadline=practice.deadline,
+        question_ids=list(practice.question_ids or []),
+        tags=list(practice.tags or []),
+        is_valid=practice.is_valid,
+        created_at=practice.created_at,
+        question_count=len(practice.question_ids or []),
+        assignment_count=assignment_count,
+        completed_count=completed_count,
+    )
+
+
+def _latest_session_map(
+    db: Session,
+    practice_id: uuid.UUID,
+    user_ids: Sequence[uuid.UUID],
+) -> dict[uuid.UUID, TestSession]:
+    """For each user, return their most recent TestSession for this practice."""
+    if not user_ids:
+        return {}
+    rows = (
+        db.query(TestSession)
+        .filter(
+            TestSession.practice_id == practice_id,
+            TestSession.user_id.in_(list(user_ids)),
+        )
+        .order_by(TestSession.user_id, TestSession.started_time.desc())
+        .all()
+    )
+    latest: dict[uuid.UUID, TestSession] = {}
+    for row in rows:
+        if row.user_id not in latest:
+            latest[row.user_id] = row
+    return latest
+
+
+def serialize_practice_assignment(
+    assignment: PracticeAssignment,
+    latest_session: Optional[TestSession] = None,
+) -> PracticeAssignmentOut:
+    return PracticeAssignmentOut(
+        assignment_id=assignment.assignment_id,
+        practice_id=assignment.practice_id,
+        practice=_practice_ref(assignment.practice),
+        user_id=assignment.user_id,
+        user=_user_ref(assignment.user),
+        assigned_at=assignment.assigned_at,
+        is_completed=assignment.is_completed,
+        completed_at=assignment.completed_at,
+        latest_session_id=latest_session.session_id if latest_session else None,
+        latest_score=float(latest_session.overall_points) if latest_session else None,
+        latest_session_finished=latest_session.is_finished if latest_session else None,
+    )
+
+
+def _answer_counts_map(
+    db: Session,
+    session_ids: Sequence[uuid.UUID],
+) -> dict[uuid.UUID, tuple[int, int]]:
+    """Return {session_id: (answered_count, correct_count)} in one trip."""
+    if not session_ids:
+        return {}
+    rows = (
+        db.query(
+            UserAnswer.session_id,
+            func.count(UserAnswer.id).label("answered"),
+            func.count(case((UserAnswer.is_correct == True, 1))).label("correct"),
+        )
+        .filter(UserAnswer.session_id.in_(list(session_ids)))
+        .group_by(UserAnswer.session_id)
+        .all()
+    )
+    return {row.session_id: (int(row.answered), int(row.correct)) for row in rows}
+
+
+def _derive_session_status_label(session: TestSession) -> str:
+    score = int(session.overall_points or 0)
+    if session.is_finished:
+        return f"Passed ({score}%)" if score >= 60 else f"Failed ({score}%)"
+    return "In Progress"
+
+
+def serialize_test_session(
+    session: TestSession,
+    answered: Optional[int] = None,
+    correct: Optional[int] = None,
+    total: Optional[int] = None,
+) -> AdminTestSessionOut:
+    practice = session.practice
+    return AdminTestSessionOut(
+        session_id=session.session_id,
+        practice_id=session.practice_id,
+        practice=_practice_ref(practice),
+        user_id=session.user_id,
+        user=_user_ref(session.user),
+        overall_points=float(session.overall_points or 0),
+        is_finished=session.is_finished,
+        started_time=session.started_time,
+        answered_questions=answered,
+        correct_answers=correct,
+        total_questions=total if total is not None else (
+            len(practice.question_ids) if practice and practice.question_ids else None
+        ),
+        status_label=_derive_session_status_label(session),
+    )
+
+
+def serialize_user_answer(
+    answer: UserAnswer,
+    question: Optional[Question] = None,
+) -> AdminUserAnswerOut:
+    question_text: Optional[str] = None
+    user_answer_text: Optional[str] = None
+    correct_answer_id: Optional[uuid.UUID] = None
+    correct_answer_text: Optional[str] = None
+
+    if question:
+        question_text = question.text
+        correct_answer_id = question.correct_answer
+        for option in question.options or []:
+            opt_id = str(option.get("id")) if isinstance(option, dict) else None
+            opt_text = option.get("text") if isinstance(option, dict) else None
+            if not opt_id:
+                continue
+            if answer.user_answer and str(answer.user_answer) == opt_id:
+                user_answer_text = opt_text
+            if correct_answer_id and str(correct_answer_id) == opt_id:
+                correct_answer_text = opt_text
+
+    return AdminUserAnswerOut(
+        id=answer.id,
+        session_id=answer.session_id,
+        question_id=answer.question_id,
+        question=_question_ref(question),
+        question_text=question_text,
+        user_answer=answer.user_answer,
+        user_answer_text=user_answer_text,
+        correct_answer_id=correct_answer_id,
+        correct_answer_text=correct_answer_text,
+        is_correct=answer.is_correct,
+        points_awarded=answer.points_awarded,
+        time_spent=answer.time_spent,
+    )
+
+
+def _check_user_dependents(db: Session, user_id: uuid.UUID) -> dict[str, int]:
+    """Return a dict of dependent record counts for a user."""
+    return {
+        "test_sessions": db.query(func.count(TestSession.session_id))
+        .filter(TestSession.user_id == user_id)
+        .scalar() or 0,
+        "assignments": db.query(func.count(PracticeAssignment.assignment_id))
+        .filter(PracticeAssignment.user_id == user_id)
+        .scalar() or 0,
+        "candidate_profiles": db.query(func.count(Candidate.id))
+        .filter(Candidate.user_id == user_id)
+        .scalar() or 0,
+    }
+
+
 @router.get("/dashboard/summary", response_model=AdminDashboardSummary)
 def get_dashboard_summary(
     db: Session = Depends(get_db),
@@ -540,7 +877,7 @@ def get_student_stats(
     return {"items": items, "total": int(total), "offset": offset, "limit": limit}
 
 
-@router.get("/users", response_model=List[AdminUserOut])
+@router.get("/users", response_model=AdminPagedUsers)
 def list_users(
     role: Optional[Role] = None,
     search: Optional[str] = None,
@@ -573,7 +910,20 @@ def list_users(
             )
         )
 
-    return query.order_by(User.username.asc()).offset(offset).limit(limit).all()
+    total = query.count()
+    users = (
+        query.options(joinedload(User.company))
+        .order_by(User.username.asc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    return AdminPagedUsers(
+        items=[serialize_admin_user(u) for u in users],
+        total=total,
+        offset=offset,
+        limit=limit,
+    )
 
 
 @router.get("/users/search", response_model=AdminUserSearchResponse)
@@ -605,8 +955,19 @@ def search_users(
         )
 
     total = query.count()
-    users = query.order_by(User.username.asc()).offset(offset).limit(limit).all()
-    return {"items": users, "total": total, "offset": offset, "limit": limit}
+    users = (
+        query.options(joinedload(User.company))
+        .order_by(User.username.asc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    return AdminUserSearchResponse(
+        items=[serialize_admin_user(u) for u in users],
+        total=total,
+        offset=offset,
+        limit=limit,
+    )
 
 
 @router.post("/users", response_model=AdminUserCreatedOut, status_code=status.HTTP_201_CREATED)
@@ -812,19 +1173,185 @@ def bulk_create_users(
     }
 
 
-@router.get("/users/{user_id}", response_model=AdminUserOut)
+@router.get("/users/{user_id}", response_model=AdminUserDetail)
 def get_user(
     user_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(require_admin),
+):
+    user = (
+        apply_admin_user_scope(db.query(User), admin_user)
+        .options(joinedload(User.company))
+        .filter(User.id == user_id)
+        .first()
+    )
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    assignment_row = (
+        db.query(
+            func.count(PracticeAssignment.assignment_id).label("assigned"),
+            func.count(case((PracticeAssignment.is_completed == True, 1))).label("completed"),
+        )
+        .filter(PracticeAssignment.user_id == user_id)
+        .one()
+    )
+    session_row = (
+        db.query(
+            func.count(TestSession.session_id).label("total"),
+            func.count(case((TestSession.is_finished == True, 1))).label("finished"),
+            func.count(case((TestSession.is_finished == False, 1))).label("active"),
+            func.coalesce(func.avg(case((TestSession.is_finished == True, TestSession.overall_points))), 0).label("avg_score"),
+            func.max(TestSession.started_time).label("last_activity"),
+        )
+        .filter(TestSession.user_id == user_id)
+        .one()
+    )
+
+    base = serialize_admin_user(user)
+    return AdminUserDetail(
+        **base.model_dump(),
+        assigned_practices=int(assignment_row.assigned or 0),
+        completed_practices=int(assignment_row.completed or 0),
+        active_sessions=int(session_row.active or 0),
+        completed_sessions=int(session_row.finished or 0),
+        average_score=int(session_row.avg_score or 0),
+        last_activity_at=session_row.last_activity,
+    )
+
+
+@router.patch("/users/{user_id}", response_model=AdminUserOut)
+def update_user(
+    user_id: uuid.UUID,
+    data: AdminUserUpdate,
     db: Session = Depends(get_db),
     admin_user: User = Depends(require_admin),
 ):
     user = apply_admin_user_scope(db.query(User), admin_user).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    return user
+
+    update_data = data.model_dump(exclude_unset=True)
+
+    if "role" in update_data and update_data["role"] is not None:
+        ensure_role_can_be_created(update_data["role"], admin_user)
+    if "company_id" in update_data:
+        if update_data["company_id"] is None and admin_user.role != Role.SUPERADMIN:
+            raise HTTPException(status_code=403, detail="Only SUPERADMIN can clear company assignment.")
+        update_data["company_id"] = resolve_company_id(update_data.get("company_id"), admin_user)
+    if "email" in update_data and update_data["email"] is not None:
+        update_data["email"] = str(update_data["email"])
+
+    for field, value in update_data.items():
+        setattr(user, field, value)
+
+    db.commit()
+    db.refresh(user)
+    db.refresh(user, ["company"])
+    return serialize_admin_user(user)
 
 
-@router.get("/companies", response_model=List[CompanyOut])
+@router.delete("/users/{user_id}", response_model=AdminDeleteResult)
+def delete_user(
+    user_id: uuid.UUID,
+    force: bool = Query(False, description="Delete the user even if dependent records exist."),
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(require_admin),
+):
+    if user_id == admin_user.id:
+        raise HTTPException(status_code=400, detail="Cannot delete your own account.")
+
+    user = apply_admin_user_scope(db.query(User), admin_user).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if user.role == Role.SUPERADMIN and admin_user.role != Role.SUPERADMIN:
+        raise HTTPException(status_code=403, detail="Only SUPERADMIN can delete a SUPERADMIN account.")
+
+    dependents = _check_user_dependents(db, user_id)
+    total_dependents = sum(dependents.values())
+    if total_dependents and not force:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "User has dependent records. Pass force=true to delete anyway.",
+                "dependents": dependents,
+            },
+        )
+
+    if total_dependents:
+        db.query(UserAnswer).filter(
+            UserAnswer.session_id.in_(
+                db.query(TestSession.session_id).filter(TestSession.user_id == user_id)
+            )
+        ).delete(synchronize_session=False)
+        db.query(TestSession).filter(TestSession.user_id == user_id).delete(synchronize_session=False)
+        db.query(PracticeAssignment).filter(PracticeAssignment.user_id == user_id).delete(synchronize_session=False)
+        db.query(Candidate).filter(Candidate.user_id == user_id).delete(synchronize_session=False)
+
+    db.delete(user)
+    db.commit()
+
+    message = "User deleted."
+    if total_dependents:
+        message = (
+            f"User deleted along with {total_dependents} dependent record(s) "
+            f"({dependents})."
+        )
+    return AdminDeleteResult(id=user_id, deleted=True, message=message)
+
+
+@router.post(
+    "/users/{user_id}/password-reset",
+    response_model=AdminUserPasswordResetResult,
+)
+def reset_user_password(
+    user_id: uuid.UUID,
+    data: AdminUserPasswordReset,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(require_admin),
+):
+    user = apply_admin_user_scope(db.query(User), admin_user).filter(User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    if user.role == Role.SUPERADMIN and admin_user.role != Role.SUPERADMIN:
+        raise HTTPException(status_code=403, detail="Only SUPERADMIN can reset a SUPERADMIN password.")
+
+    new_password = data.new_password or generate_random_password()
+    user.password = hash_password(new_password)
+    db.commit()
+
+    result = AdminUserPasswordResetResult(
+        id=user.id,
+        username=user.username,
+        password=new_password,
+        notification_sent=False,
+    )
+
+    if data.notify_user:
+        if not user.email:
+            result.notification_error = "User has no email address on file."
+        else:
+            try:
+                send_email(
+                    to_email=user.email,
+                    subject="Your TalentFlow password has been reset",
+                    plain_text=(
+                        f"Hello {user.name},\n\n"
+                        f"An administrator has reset your password.\n"
+                        f"New password: {new_password}\n\n"
+                        f"Please log in and change it as soon as possible."
+                    ),
+                )
+                result.notification_sent = True
+            except EmailDeliveryError as exc:
+                result.notification_error = str(exc)
+
+    return result
+
+
+@router.get("/companies", response_model=AdminPagedCompanies)
 def list_companies(
     search: Optional[str] = None,
     offset: int = Query(0, ge=0),
@@ -842,10 +1369,43 @@ def list_companies(
             or_(Company.name.ilike(pattern), Company.email.ilike(pattern), Company.INN.ilike(pattern))
         )
 
-    return query.order_by(Company.name.asc()).offset(offset).limit(limit).all()
+    total = query.count()
+    companies = query.order_by(Company.name.asc()).offset(offset).limit(limit).all()
+    return AdminPagedCompanies(
+        items=[CompanyOut.model_validate(c) for c in companies],
+        total=total,
+        offset=offset,
+        limit=limit,
+    )
 
 
-@router.get("/companies/{company_id}", response_model=CompanyOut)
+@router.post("/companies", response_model=CompanyOut, status_code=status.HTTP_201_CREATED)
+def create_company(
+    data: CompanyCreate,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(require_admin),
+):
+    if admin_user.role != Role.SUPERADMIN:
+        raise HTTPException(status_code=403, detail="Only SUPERADMIN can create companies.")
+
+    existing = db.query(Company.id).filter(Company.name == data.name).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="Company name already exists.")
+
+    company = Company(
+        id=uuid.uuid4(),
+        name=data.name,
+        phone_number=data.phone_number,
+        INN=data.INN,
+        email=str(data.email) if data.email else None,
+    )
+    db.add(company)
+    db.commit()
+    db.refresh(company)
+    return CompanyOut.model_validate(company)
+
+
+@router.get("/companies/{company_id}", response_model=CompanyDetail)
 def get_company(
     company_id: uuid.UUID,
     db: Session = Depends(get_db),
@@ -857,10 +1417,126 @@ def get_company(
     company = db.query(Company).filter(Company.id == company_id).first()
     if not company:
         raise HTTPException(status_code=404, detail="Company not found")
-    return company
+
+    user_count = db.query(func.count(User.id)).filter(User.company_id == company_id).scalar() or 0
+    vacancy_count = (
+        db.query(func.count(Created_Vacancy.id))
+        .filter(Created_Vacancy.company_id == company_id)
+        .scalar()
+        or 0
+    )
+    candidate_count = (
+        db.query(func.count(Candidate.id))
+        .join(Created_Vacancy, Candidate.vacancy_id == Created_Vacancy.id)
+        .filter(Created_Vacancy.company_id == company_id)
+        .scalar()
+        or 0
+    )
+
+    base = CompanyOut.model_validate(company)
+    return CompanyDetail(
+        **base.model_dump(),
+        user_count=int(user_count),
+        vacancy_count=int(vacancy_count),
+        candidate_count=int(candidate_count),
+    )
 
 
-@router.get("/companies/{company_id}/users", response_model=List[AdminUserOut])
+@router.patch("/companies/{company_id}", response_model=CompanyOut)
+def update_company(
+    company_id: uuid.UUID,
+    data: CompanyUpdate,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(require_admin),
+):
+    if admin_user.role != Role.SUPERADMIN and admin_user.company_id != company_id:
+        raise HTTPException(status_code=403, detail="Company is outside this admin's scope.")
+
+    company = db.query(Company).filter(Company.id == company_id).first()
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+
+    update_data = data.model_dump(exclude_unset=True)
+    if "name" in update_data and update_data["name"] != company.name:
+        clash = (
+            db.query(Company.id)
+            .filter(Company.name == update_data["name"], Company.id != company_id)
+            .first()
+        )
+        if clash:
+            raise HTTPException(status_code=409, detail="Another company already uses that name.")
+    if "email" in update_data and update_data["email"] is not None:
+        update_data["email"] = str(update_data["email"])
+
+    for field, value in update_data.items():
+        setattr(company, field, value)
+
+    db.commit()
+    db.refresh(company)
+    return CompanyOut.model_validate(company)
+
+
+@router.delete("/companies/{company_id}", response_model=AdminDeleteResult)
+def delete_company(
+    company_id: uuid.UUID,
+    force: bool = Query(False, description="Delete the company even if it still has users or vacancies."),
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(require_admin),
+):
+    if admin_user.role != Role.SUPERADMIN:
+        raise HTTPException(status_code=403, detail="Only SUPERADMIN can delete companies.")
+
+    company = db.query(Company).filter(Company.id == company_id).first()
+    if not company:
+        raise HTTPException(status_code=404, detail="Company not found")
+
+    user_count = db.query(func.count(User.id)).filter(User.company_id == company_id).scalar() or 0
+    vacancy_count = (
+        db.query(func.count(Created_Vacancy.id))
+        .filter(Created_Vacancy.company_id == company_id)
+        .scalar()
+        or 0
+    )
+
+    dependents = {"users": int(user_count), "vacancies": int(vacancy_count)}
+    if (user_count or vacancy_count) and not force:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Company still has users or vacancies. Pass force=true to detach and delete.",
+                "dependents": dependents,
+            },
+        )
+
+    if user_count:
+        db.query(User).filter(User.company_id == company_id).update(
+            {User.company_id: None}, synchronize_session=False
+        )
+    if vacancy_count:
+        vacancy_ids = [
+            row[0]
+            for row in db.query(Created_Vacancy.id).filter(Created_Vacancy.company_id == company_id).all()
+        ]
+        if vacancy_ids:
+            db.query(Candidate).filter(Candidate.vacancy_id.in_(vacancy_ids)).delete(
+                synchronize_session=False
+            )
+            db.query(Created_Vacancy).filter(Created_Vacancy.id.in_(vacancy_ids)).delete(
+                synchronize_session=False
+            )
+
+    db.delete(company)
+    db.commit()
+
+    message = "Company deleted."
+    if user_count or vacancy_count:
+        message = (
+            f"Company deleted. Detached {user_count} user(s) and removed {vacancy_count} vacancy/vacancies."
+        )
+    return AdminDeleteResult(id=company_id, deleted=True, message=message)
+
+
+@router.get("/companies/{company_id}/users", response_model=AdminPagedUsers)
 def list_company_users(
     company_id: uuid.UUID,
     offset: int = Query(0, ge=0),
@@ -871,17 +1547,24 @@ def list_company_users(
     if admin_user.role != Role.SUPERADMIN and admin_user.company_id != company_id:
         raise HTTPException(status_code=403, detail="Company is outside this admin's scope.")
 
-    return (
-        db.query(User)
-        .filter(User.company_id == company_id)
+    query = db.query(User).filter(User.company_id == company_id)
+    total = query.count()
+    users = (
+        query.options(joinedload(User.company))
         .order_by(User.username.asc())
         .offset(offset)
         .limit(limit)
         .all()
     )
+    return AdminPagedUsers(
+        items=[serialize_admin_user(u) for u in users],
+        total=total,
+        offset=offset,
+        limit=limit,
+    )
 
 
-@router.get("/companies/{company_id}/vacancies", response_model=List[AdminVacancyOut])
+@router.get("/companies/{company_id}/vacancies", response_model=AdminPagedVacancies)
 def list_company_vacancies(
     company_id: uuid.UUID,
     offset: int = Query(0, ge=0),
@@ -892,20 +1575,33 @@ def list_company_vacancies(
     if admin_user.role != Role.SUPERADMIN and admin_user.company_id != company_id:
         raise HTTPException(status_code=403, detail="Company is outside this admin's scope.")
 
-    return (
-        db.query(Created_Vacancy)
-        .filter(Created_Vacancy.company_id == company_id)
+    query = db.query(Created_Vacancy).filter(Created_Vacancy.company_id == company_id)
+    total = query.count()
+    vacancies = (
+        query.options(joinedload(Created_Vacancy.company))
         .order_by(Created_Vacancy.start_date.desc())
         .offset(offset)
         .limit(limit)
         .all()
     )
+    counts = _candidate_count_map(db, [v.id for v in vacancies])
+    today = date.today()
+    return AdminPagedVacancies(
+        items=[
+            serialize_admin_vacancy(v, candidate_count=counts.get(v.id, 0), today=today)
+            for v in vacancies
+        ],
+        total=total,
+        offset=offset,
+        limit=limit,
+    )
 
 
-@router.get("/vacancies", response_model=List[AdminVacancyOut])
+@router.get("/vacancies", response_model=AdminPagedVacancies)
 def list_vacancies(
     company_id: Optional[uuid.UUID] = None,
     is_available: Optional[bool] = None,
+    status_filter: Optional[str] = Query(None, alias="status", description="Open / Upcoming / Expired / Closed"),
     search: Optional[str] = None,
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
@@ -926,7 +1622,29 @@ def list_vacancies(
             or_(Created_Vacancy.job_name.ilike(pattern), Created_Vacancy.tag.ilike(pattern))
         )
 
-    return query.order_by(Created_Vacancy.start_date.desc()).offset(offset).limit(limit).all()
+    total = query.count()
+    vacancies = (
+        query.options(joinedload(Created_Vacancy.company))
+        .order_by(Created_Vacancy.start_date.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    today = date.today()
+    if status_filter:
+        vacancies = [v for v in vacancies if _derive_vacancy_status(v, today=today) == status_filter]
+
+    counts = _candidate_count_map(db, [v.id for v in vacancies])
+    return AdminPagedVacancies(
+        items=[
+            serialize_admin_vacancy(v, candidate_count=counts.get(v.id, 0), today=today)
+            for v in vacancies
+        ],
+        total=total,
+        offset=offset,
+        limit=limit,
+    )
 
 
 @router.post("/vacancies", response_model=AdminVacancyOut, status_code=status.HTTP_201_CREATED)
@@ -955,21 +1673,39 @@ def create_vacancy(
     db.add(vacancy)
     db.commit()
     db.refresh(vacancy)
-    return vacancy
+    db.refresh(vacancy, ["company"])
+    return serialize_admin_vacancy(vacancy, candidate_count=0)
 
 
-@router.get("/vacancies/{vacancy_id}", response_model=AdminVacancyOut)
+@router.get("/vacancies/{vacancy_id}", response_model=AdminVacancyDetail)
 def get_vacancy(
     vacancy_id: uuid.UUID,
     db: Session = Depends(get_db),
     admin_user: User = Depends(require_admin),
 ):
-    vacancy = apply_admin_vacancy_scope(db.query(Created_Vacancy), admin_user).filter(
-        Created_Vacancy.id == vacancy_id
-    ).first()
+    vacancy = (
+        apply_admin_vacancy_scope(db.query(Created_Vacancy), admin_user)
+        .options(joinedload(Created_Vacancy.company))
+        .filter(Created_Vacancy.id == vacancy_id)
+        .first()
+    )
     if not vacancy:
         raise HTTPException(status_code=404, detail="Vacancy not found")
-    return vacancy
+
+    rows = (
+        db.query(Candidate.status, func.count(Candidate.id))
+        .filter(Candidate.vacancy_id == vacancy_id)
+        .group_by(Candidate.status)
+        .all()
+    )
+    breakdown = {status_value: int(count) for status_value, count in rows}
+    total_candidates = sum(breakdown.values())
+
+    base = serialize_admin_vacancy(vacancy, candidate_count=total_candidates)
+    return AdminVacancyDetail(
+        **base.model_dump(),
+        candidate_status_breakdown=breakdown,
+    )
 
 
 @router.patch("/vacancies/{vacancy_id}", response_model=AdminVacancyOut)
@@ -999,10 +1735,51 @@ def update_vacancy(
 
     db.commit()
     db.refresh(vacancy)
-    return vacancy
+    db.refresh(vacancy, ["company"])
+
+    candidate_count = (
+        db.query(func.count(Candidate.id)).filter(Candidate.vacancy_id == vacancy_id).scalar() or 0
+    )
+    return serialize_admin_vacancy(vacancy, candidate_count=int(candidate_count))
 
 
-@router.get("/vacancies/{vacancy_id}/candidates", response_model=List[AdminCandidateOut])
+@router.delete("/vacancies/{vacancy_id}", response_model=AdminDeleteResult)
+def delete_vacancy(
+    vacancy_id: uuid.UUID,
+    force: bool = Query(False, description="Delete the vacancy along with its candidates."),
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(require_admin),
+):
+    vacancy = apply_admin_vacancy_scope(db.query(Created_Vacancy), admin_user).filter(
+        Created_Vacancy.id == vacancy_id
+    ).first()
+    if not vacancy:
+        raise HTTPException(status_code=404, detail="Vacancy not found")
+
+    candidate_count = (
+        db.query(func.count(Candidate.id)).filter(Candidate.vacancy_id == vacancy_id).scalar() or 0
+    )
+    if candidate_count and not force:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Vacancy still has candidates. Pass force=true to delete them too.",
+                "dependents": {"candidates": int(candidate_count)},
+            },
+        )
+
+    if candidate_count:
+        db.query(Candidate).filter(Candidate.vacancy_id == vacancy_id).delete(synchronize_session=False)
+    db.delete(vacancy)
+    db.commit()
+
+    message = "Vacancy deleted."
+    if candidate_count:
+        message = f"Vacancy deleted along with {int(candidate_count)} candidate(s)."
+    return AdminDeleteResult(id=vacancy_id, deleted=True, message=message)
+
+
+@router.get("/vacancies/{vacancy_id}/candidates", response_model=AdminPagedCandidates)
 def list_vacancy_candidates(
     vacancy_id: uuid.UUID,
     status_filter: Optional[str] = Query(None, alias="status"),
@@ -1021,13 +1798,30 @@ def list_vacancy_candidates(
     if status_filter:
         query = query.filter(Candidate.status == status_filter)
 
-    return query.order_by(Candidate.created_at.desc()).offset(offset).limit(limit).all()
+    total = query.count()
+    candidates = (
+        query.options(
+            joinedload(Candidate.user),
+            joinedload(Candidate.vacancy).joinedload(Created_Vacancy.company),
+        )
+        .order_by(Candidate.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    return AdminPagedCandidates(
+        items=[serialize_admin_candidate(c) for c in candidates],
+        total=total,
+        offset=offset,
+        limit=limit,
+    )
 
 
-@router.get("/candidates", response_model=List[AdminCandidateOut])
+@router.get("/candidates", response_model=AdminPagedCandidates)
 def list_candidates(
     status_filter: Optional[str] = Query(None, alias="status"),
     vacancy_id: Optional[uuid.UUID] = None,
+    company_id: Optional[uuid.UUID] = None,
     search: Optional[str] = None,
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
@@ -1041,11 +1835,123 @@ def list_candidates(
         query = query.filter(Candidate.status == status_filter)
     if vacancy_id:
         query = query.filter(Candidate.vacancy_id == vacancy_id)
+    if company_id:
+        if admin_user.role != Role.SUPERADMIN and company_id != admin_user.company_id:
+            raise HTTPException(status_code=403, detail="Company is outside this admin's scope.")
+        query = query.filter(Created_Vacancy.company_id == company_id)
     if search:
         pattern = f"%{search}%"
         query = query.filter(or_(Candidate.full_name.ilike(pattern), Candidate.skills.ilike(pattern)))
 
-    return query.order_by(Candidate.created_at.desc()).offset(offset).limit(limit).all()
+    total = query.count()
+    candidates = (
+        query.options(
+            joinedload(Candidate.user),
+            joinedload(Candidate.vacancy).joinedload(Created_Vacancy.company),
+        )
+        .order_by(Candidate.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    return AdminPagedCandidates(
+        items=[serialize_admin_candidate(c) for c in candidates],
+        total=total,
+        offset=offset,
+        limit=limit,
+    )
+
+
+@router.post("/candidates", response_model=AdminCandidateOut, status_code=status.HTTP_201_CREATED)
+def create_candidate(
+    data: AdminCandidateCreate,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(require_admin),
+):
+    vacancy = apply_admin_vacancy_scope(db.query(Created_Vacancy), admin_user).filter(
+        Created_Vacancy.id == data.vacancy_id
+    ).first()
+    if not vacancy:
+        raise HTTPException(status_code=404, detail="Vacancy not found or outside admin scope.")
+
+    user = db.query(User).filter(User.id == data.user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    existing = (
+        db.query(Candidate.id)
+        .filter(Candidate.user_id == data.user_id, Candidate.vacancy_id == data.vacancy_id)
+        .first()
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail="Candidate already exists for this user/vacancy.")
+
+    full_name = data.full_name or f"{user.name} {user.surname}".strip()
+    candidate = Candidate(
+        id=uuid.uuid4(),
+        user_id=data.user_id,
+        vacancy_id=data.vacancy_id,
+        full_name=full_name,
+        status=data.status,
+        resume_loc=data.resume_loc,
+        ai_score=data.ai_score,
+        education=data.education,
+        experience=data.experience,
+        skills=data.skills,
+    )
+    db.add(candidate)
+    db.commit()
+    db.refresh(candidate)
+    db.refresh(candidate, ["user", "vacancy"])
+    if candidate.vacancy is not None:
+        db.refresh(candidate.vacancy, ["company"])
+    return serialize_admin_candidate(candidate)
+
+
+@router.get("/candidates/{candidate_id}", response_model=AdminCandidateOut)
+def get_candidate(
+    candidate_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(require_admin),
+):
+    query = (
+        db.query(Candidate)
+        .join(Created_Vacancy, Candidate.vacancy_id == Created_Vacancy.id)
+        .options(
+            joinedload(Candidate.user),
+            joinedload(Candidate.vacancy).joinedload(Created_Vacancy.company),
+        )
+    )
+    query = apply_admin_vacancy_scope(query, admin_user)
+    candidate = query.filter(Candidate.id == candidate_id).first()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+    return serialize_admin_candidate(candidate)
+
+
+@router.patch("/candidates/{candidate_id}", response_model=AdminCandidateOut)
+def update_candidate(
+    candidate_id: uuid.UUID,
+    data: AdminCandidateUpdate,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(require_admin),
+):
+    query = db.query(Candidate).join(Created_Vacancy, Candidate.vacancy_id == Created_Vacancy.id)
+    query = apply_admin_vacancy_scope(query, admin_user)
+    candidate = query.filter(Candidate.id == candidate_id).first()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+
+    update_data = data.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(candidate, field, value)
+
+    db.commit()
+    db.refresh(candidate)
+    db.refresh(candidate, ["user", "vacancy"])
+    if candidate.vacancy is not None:
+        db.refresh(candidate.vacancy, ["company"])
+    return serialize_admin_candidate(candidate)
 
 
 @router.patch("/candidates/{candidate_id}/status", response_model=AdminCandidateOut)
@@ -1064,12 +1970,34 @@ def update_candidate_status(
     candidate.status = update_data.status
     db.commit()
     db.refresh(candidate)
-    return candidate
+    db.refresh(candidate, ["user", "vacancy"])
+    if candidate.vacancy is not None:
+        db.refresh(candidate.vacancy, ["company"])
+    return serialize_admin_candidate(candidate)
 
 
-@router.get("/questions")
+@router.delete("/candidates/{candidate_id}", response_model=AdminDeleteResult)
+def delete_candidate(
+    candidate_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(require_admin),
+):
+    query = db.query(Candidate).join(Created_Vacancy, Candidate.vacancy_id == Created_Vacancy.id)
+    query = apply_admin_vacancy_scope(query, admin_user)
+    candidate = query.filter(Candidate.id == candidate_id).first()
+    if not candidate:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+
+    db.delete(candidate)
+    db.commit()
+    return AdminDeleteResult(id=candidate_id, deleted=True, message="Candidate deleted.")
+
+
+@router.get("/questions", response_model=AdminPagedQuestions)
 def list_questions(
     category: Optional[str] = None,
+    difficulty_min: Optional[float] = Query(None, ge=0),
+    difficulty_max: Optional[float] = Query(None, ge=0),
     search: Optional[str] = None,
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
@@ -1080,20 +2008,26 @@ def list_questions(
 
     if category:
         query = query.filter(Question.category == category)
+    if difficulty_min is not None:
+        query = query.filter(Question.difficulty_level >= difficulty_min)
+    if difficulty_max is not None:
+        query = query.filter(Question.difficulty_level <= difficulty_max)
     if search:
         query = query.filter(Question.text.ilike(f"%{search}%"))
 
-    questions = query.order_by(Question.category.asc(), Question.difficulty_level.asc()).offset(offset).limit(limit).all()
-    return [
-        {
-            "id": q.id,
-            "text": q.text,
-            "category": q.category,
-            "points": q.points,
-            "difficulty_level": q.difficulty_level,
-        }
-        for q in questions
-    ]
+    total = query.count()
+    questions = (
+        query.order_by(Question.category.asc(), Question.difficulty_level.asc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    return AdminPagedQuestions(
+        items=[QuestionOut.model_validate(q) for q in questions],
+        total=total,
+        offset=offset,
+        limit=limit,
+    )
 
 
 @router.post("/questions", response_model=QuestionOut, status_code=status.HTTP_201_CREATED)
@@ -1204,7 +2138,7 @@ def update_question(
     return question
 
 
-@router.patch("/questions/{question_id}/difficulty")
+@router.patch("/questions/{question_id}/difficulty", response_model=AdminQuestionDifficultyResult)
 def update_question_difficulty(
     question_id: uuid.UUID,
     update_data: DifficultyUpdate,
@@ -1230,29 +2164,79 @@ def update_question_difficulty(
     db.commit()
     db.refresh(question)
 
-    return {
-        "id": question.id,
-        "old_difficulty": old_difficulty,
-        "new_difficulty": question.difficulty_level,
-        "change_reason": update_data.change_reason,
-    }
-
-
-@router.get("/questions/{question_id}/history", response_model=List[QuestionHistoryOut])
-def list_question_history(
-    question_id: uuid.UUID,
-    db: Session = Depends(get_db),
-    admin_user: User = Depends(require_admin),
-):
-    return (
-        db.query(QuestionHistory)
-        .filter(QuestionHistory.question_id == question_id)
-        .order_by(QuestionHistory.changed_at.desc())
-        .all()
+    return AdminQuestionDifficultyResult(
+        id=question.id,
+        text=question.text,
+        category=question.category,
+        old_difficulty=old_difficulty,
+        new_difficulty=question.difficulty_level,
+        change_reason=update_data.change_reason,
     )
 
 
-@router.get("/practices", response_model=List[PracticeOut])
+@router.delete("/questions/{question_id}", response_model=AdminDeleteResult)
+def delete_question(
+    question_id: uuid.UUID,
+    force: bool = Query(False, description="Detach the question from any practices that reference it."),
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(require_admin),
+):
+    question = db.query(Question).filter(Question.id == question_id).first()
+    if not question:
+        raise HTTPException(status_code=404, detail="Question not found")
+
+    # Detach from practices that still reference this question_id in their
+    # question_ids array.
+    practices_using = db.query(Practice).filter(Practice.question_ids.contains([question_id])).all()
+    if practices_using and not force:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Question is referenced by practices. Pass force=true to detach and delete.",
+                "dependents": {"practices": len(practices_using)},
+            },
+        )
+
+    for practice in practices_using:
+        practice.question_ids = [qid for qid in (practice.question_ids or []) if qid != question_id]
+
+    db.query(UserAnswer).filter(UserAnswer.question_id == question_id).delete(synchronize_session=False)
+    db.query(QuestionHistory).filter(QuestionHistory.question_id == question_id).delete(
+        synchronize_session=False
+    )
+    db.delete(question)
+    db.commit()
+
+    message = "Question deleted."
+    if practices_using:
+        message = (
+            f"Question deleted and detached from {len(practices_using)} practice(s)."
+        )
+    return AdminDeleteResult(id=question_id, deleted=True, message=message)
+
+
+@router.get("/questions/{question_id}/history", response_model=AdminPagedQuestionHistory)
+def list_question_history(
+    question_id: uuid.UUID,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(require_admin),
+):
+    query = db.query(QuestionHistory).filter(QuestionHistory.question_id == question_id)
+    total = query.count()
+    rows = (
+        query.order_by(QuestionHistory.changed_at.desc()).offset(offset).limit(limit).all()
+    )
+    return AdminPagedQuestionHistory(
+        items=[QuestionHistoryOut.model_validate(r) for r in rows],
+        total=total,
+        offset=offset,
+        limit=limit,
+    )
+
+
+@router.get("/practices", response_model=AdminPagedPractices)
 def list_practices(
     is_valid: Optional[bool] = None,
     search: Optional[str] = None,
@@ -1269,7 +2253,24 @@ def list_practices(
         pattern = f"%{search}%"
         query = query.filter(or_(Practice.title.ilike(pattern), Practice.description.ilike(pattern)))
 
-    return query.order_by(Practice.created_at.desc()).offset(offset).limit(limit).all()
+    total = query.count()
+    practices = (
+        query.order_by(Practice.created_at.desc()).offset(offset).limit(limit).all()
+    )
+    counts = _practice_counts_map(db, [p.practice_id for p in practices])
+    return AdminPagedPractices(
+        items=[
+            serialize_practice(
+                p,
+                assignment_count=counts.get(p.practice_id, (0, 0))[0],
+                completed_count=counts.get(p.practice_id, (0, 0))[1],
+            )
+            for p in practices
+        ],
+        total=total,
+        offset=offset,
+        limit=limit,
+    )
 
 
 @router.post("/practices", response_model=PracticeOut, status_code=status.HTTP_201_CREATED)
@@ -1295,16 +2296,47 @@ def create_practice(
     db.add(new_practice)
     db.commit()
     db.refresh(new_practice)
-    return new_practice
+    return serialize_practice(new_practice, assignment_count=0, completed_count=0)
 
 
-@router.get("/practices/{practice_id}", response_model=PracticeOut)
+@router.get("/practices/{practice_id}", response_model=PracticeDetail)
 def get_practice(
     practice_id: uuid.UUID,
     db: Session = Depends(get_db),
     admin_user: User = Depends(require_admin),
 ):
-    return get_practice_or_404(db, practice_id)
+    practice = get_practice_or_404(db, practice_id)
+
+    counts = _practice_counts_map(db, [practice.practice_id])
+    assignment_count, completed_count = counts.get(practice.practice_id, (0, 0))
+
+    session_row = (
+        db.query(
+            func.count(case((TestSession.is_finished == False, 1))).label("active"),
+            func.count(case((TestSession.is_finished == True, 1))).label("finished"),
+            func.coalesce(
+                func.avg(case((TestSession.is_finished == True, TestSession.overall_points))),
+                0,
+            ).label("avg_score"),
+        )
+        .filter(TestSession.practice_id == practice.practice_id)
+        .one()
+    )
+
+    questions: list[QuestionRef] = []
+    if practice.question_ids:
+        rows = db.query(Question).filter(Question.id.in_(practice.question_ids)).all()
+        by_id = {q.id: q for q in rows}
+        questions = [QuestionRef.model_validate(by_id[qid]) for qid in practice.question_ids if qid in by_id]
+
+    base = serialize_practice(practice, assignment_count=assignment_count, completed_count=completed_count)
+    return PracticeDetail(
+        **base.model_dump(),
+        questions=questions,
+        active_sessions=int(session_row.active or 0),
+        finished_sessions=int(session_row.finished or 0),
+        average_score=float(session_row.avg_score or 0.0),
+    )
 
 
 @router.get("/practices/{practice_id}/questions", response_model=List[QuestionOut])
@@ -1340,13 +2372,81 @@ def update_practice(
 
     db.commit()
     db.refresh(practice)
-    return practice
+    counts = _practice_counts_map(db, [practice.practice_id])
+    assignment_count, completed_count = counts.get(practice.practice_id, (0, 0))
+    return serialize_practice(
+        practice,
+        assignment_count=assignment_count,
+        completed_count=completed_count,
+    )
 
 
-@router.get("/practices/{practice_id}/assignments", response_model=List[PracticeAssignmentOut])
+@router.delete("/practices/{practice_id}", response_model=AdminDeleteResult)
+def delete_practice(
+    practice_id: uuid.UUID,
+    force: bool = Query(False, description="Delete the practice even if it has assignments or sessions."),
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(require_admin),
+):
+    practice = get_practice_or_404(db, practice_id)
+
+    assignment_count = (
+        db.query(func.count(PracticeAssignment.assignment_id))
+        .filter(PracticeAssignment.practice_id == practice_id)
+        .scalar()
+        or 0
+    )
+    session_count = (
+        db.query(func.count(TestSession.session_id))
+        .filter(TestSession.practice_id == practice_id)
+        .scalar()
+        or 0
+    )
+
+    dependents = {
+        "assignments": int(assignment_count),
+        "test_sessions": int(session_count),
+    }
+    if (assignment_count or session_count) and not force:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "Practice still has assignments or sessions. Pass force=true to cascade delete.",
+                "dependents": dependents,
+            },
+        )
+
+    if session_count:
+        db.query(UserAnswer).filter(
+            UserAnswer.session_id.in_(
+                db.query(TestSession.session_id).filter(TestSession.practice_id == practice_id)
+            )
+        ).delete(synchronize_session=False)
+        db.query(TestSession).filter(TestSession.practice_id == practice_id).delete(
+            synchronize_session=False
+        )
+    if assignment_count:
+        db.query(PracticeAssignment).filter(
+            PracticeAssignment.practice_id == practice_id
+        ).delete(synchronize_session=False)
+
+    db.delete(practice)
+    db.commit()
+
+    message = "Practice deleted."
+    if assignment_count or session_count:
+        message = (
+            f"Practice deleted along with {assignment_count} assignment(s) and {session_count} session(s)."
+        )
+    return AdminDeleteResult(id=practice_id, deleted=True, message=message)
+
+
+@router.get("/practices/{practice_id}/assignments", response_model=AdminPagedAssignments)
 def list_practice_assignments(
     practice_id: uuid.UUID,
     is_completed: Optional[bool] = None,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
     admin_user: User = Depends(require_admin),
 ):
@@ -1354,7 +2454,6 @@ def list_practice_assignments(
     query = (
         db.query(PracticeAssignment)
         .join(User, PracticeAssignment.user_id == User.id)
-        .options(joinedload(PracticeAssignment.user))
     )
     query = query.filter(PracticeAssignment.practice_id == practice_id)
     query = apply_admin_user_scope(query, admin_user)
@@ -1362,7 +2461,31 @@ def list_practice_assignments(
     if is_completed is not None:
         query = query.filter(PracticeAssignment.is_completed == is_completed)
 
-    return query.order_by(PracticeAssignment.assigned_at.desc()).all()
+    total = query.count()
+    assignments = (
+        query.options(
+            joinedload(PracticeAssignment.user),
+            joinedload(PracticeAssignment.practice),
+        )
+        .order_by(PracticeAssignment.assigned_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    latest_map = _latest_session_map(
+        db,
+        practice_id,
+        [a.user_id for a in assignments],
+    )
+    return AdminPagedAssignments(
+        items=[
+            serialize_practice_assignment(a, latest_session=latest_map.get(a.user_id))
+            for a in assignments
+        ],
+        total=total,
+        offset=offset,
+        limit=limit,
+    )
 
 
 @router.patch("/practices/{practice_id}/assignments", response_model=PracticeAssignmentResult)
@@ -1476,11 +2599,13 @@ def send_practice_invitations(
     return result
 
 
-@router.get("/test-sessions", response_model=List[AdminTestSessionOut])
+@router.get("/test-sessions", response_model=AdminPagedTestSessions)
 def list_test_sessions(
     is_finished: Optional[bool] = None,
     user_id: Optional[uuid.UUID] = None,
     practice_id: Optional[uuid.UUID] = None,
+    min_score: Optional[float] = Query(None, ge=0),
+    started_after: Optional[datetime] = None,
     offset: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
@@ -1495,18 +2620,47 @@ def list_test_sessions(
         query = query.filter(TestSession.user_id == user_id)
     if practice_id:
         query = query.filter(TestSession.practice_id == practice_id)
+    if min_score is not None:
+        query = query.filter(TestSession.overall_points >= min_score)
+    if started_after is not None:
+        query = query.filter(TestSession.started_time >= started_after)
 
-    return query.order_by(TestSession.started_time.desc()).offset(offset).limit(limit).all()
+    total = query.count()
+    sessions = (
+        query.options(
+            joinedload(TestSession.user).joinedload(User.company),
+            joinedload(TestSession.practice),
+        )
+        .order_by(TestSession.started_time.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+    counts = _answer_counts_map(db, [s.session_id for s in sessions])
+    return AdminPagedTestSessions(
+        items=[
+            serialize_test_session(
+                s,
+                answered=counts.get(s.session_id, (0, 0))[0],
+                correct=counts.get(s.session_id, (0, 0))[1],
+            )
+            for s in sessions
+        ],
+        total=total,
+        offset=offset,
+        limit=limit,
+    )
 
 
-@router.get("/test-sessions/{session_id}", response_model=AdminTestSessionOut)
-def get_test_session(
-    session_id: uuid.UUID,
-    db: Session = Depends(get_db),
-    admin_user: User = Depends(require_admin),
-):
+def _load_test_session_or_404(
+    db: Session, session_id: uuid.UUID, admin_user: User
+) -> TestSession:
     session = (
         apply_admin_user_scope(db.query(TestSession).join(User, TestSession.user_id == User.id), admin_user)
+        .options(
+            joinedload(TestSession.user).joinedload(User.company),
+            joinedload(TestSession.practice),
+        )
         .filter(TestSession.session_id == session_id)
         .first()
     )
@@ -1515,16 +2669,119 @@ def get_test_session(
     return session
 
 
-@router.get("/test-sessions/{session_id}/answers", response_model=List[AdminUserAnswerOut])
+@router.get("/test-sessions/{session_id}", response_model=AdminTestSessionOut)
+def get_test_session(
+    session_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(require_admin),
+):
+    session = _load_test_session_or_404(db, session_id, admin_user)
+    counts = _answer_counts_map(db, [session.session_id])
+    answered, correct = counts.get(session.session_id, (0, 0))
+    return serialize_test_session(session, answered=answered, correct=correct)
+
+
+@router.delete("/test-sessions/{session_id}", response_model=AdminDeleteResult)
+def delete_test_session(
+    session_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(require_admin),
+):
+    session = _load_test_session_or_404(db, session_id, admin_user)
+    db.query(UserAnswer).filter(UserAnswer.session_id == session.session_id).delete(
+        synchronize_session=False
+    )
+    db.delete(session)
+    db.commit()
+    return AdminDeleteResult(
+        id=session_id,
+        deleted=True,
+        message="Test session and its answers deleted.",
+    )
+
+
+@router.get("/test-sessions/{session_id}/answers", response_model=AdminPagedAnswers)
 def list_test_session_answers(
     session_id: uuid.UUID,
     db: Session = Depends(get_db),
     admin_user: User = Depends(require_admin),
 ):
-    session = get_test_session(session_id, db, admin_user)
-    return (
+    session = _load_test_session_or_404(db, session_id, admin_user)
+    answers = (
         db.query(UserAnswer)
         .filter(UserAnswer.session_id == session.session_id)
         .order_by(UserAnswer.id.asc())
         .all()
     )
+    question_ids = [a.question_id for a in answers if a.question_id]
+    questions: dict[uuid.UUID, Question] = {}
+    if question_ids:
+        rows = db.query(Question).filter(Question.id.in_(question_ids)).all()
+        questions = {q.id: q for q in rows}
+    return AdminPagedAnswers(
+        items=[serialize_user_answer(a, questions.get(a.question_id)) for a in answers],
+        total=len(answers),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Groups & activity feed -- handy little admin helpers.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/groups", response_model=AdminGroupStatsResponse)
+def list_groups(
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(require_admin),
+):
+    query = apply_admin_user_scope(db.query(User), admin_user)
+    rows = (
+        query.with_entities(User.group_name, func.count(User.id))
+        .group_by(User.group_name)
+        .order_by(User.group_name.asc().nullsfirst())
+        .all()
+    )
+    items = [
+        AdminGroupStats(group_name=row[0], user_count=int(row[1]))
+        for row in rows
+    ]
+    return AdminGroupStatsResponse(items=items, total=len(items))
+
+
+@router.get("/dashboard/activity", response_model=AdminActivityResponse)
+def get_dashboard_activity(
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(require_admin),
+):
+    session_query = (
+        apply_admin_user_scope(
+            db.query(TestSession).join(User, TestSession.user_id == User.id),
+            admin_user,
+        )
+        .options(
+            joinedload(TestSession.user).joinedload(User.company),
+            joinedload(TestSession.practice),
+        )
+        .order_by(TestSession.started_time.desc())
+        .limit(limit)
+    )
+    sessions = session_query.all()
+
+    items: list[AdminActivityItem] = []
+    for session_obj in sessions:
+        items.append(
+            AdminActivityItem(
+                type="test_finished" if session_obj.is_finished else "test_started",
+                occurred_at=session_obj.started_time,
+                user_id=session_obj.user_id,
+                user=_user_ref(session_obj.user),
+                practice_id=session_obj.practice_id,
+                practice=_practice_ref(session_obj.practice),
+                score=float(session_obj.overall_points or 0),
+                is_finished=session_obj.is_finished,
+                session_id=session_obj.session_id,
+            )
+        )
+
+    return AdminActivityResponse(items=items, total=len(items))
