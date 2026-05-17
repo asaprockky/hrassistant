@@ -7,8 +7,8 @@ from typing import List, Optional, Sequence
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from passlib.context import CryptContext
-from sqlalchemy import func, or_
-from sqlalchemy.orm import Session
+from sqlalchemy import case, func, literal, or_
+from sqlalchemy.orm import Session, joinedload
 
 from database.database import get_db
 from database.models import (
@@ -367,40 +367,67 @@ def get_dashboard_summary(
     db: Session = Depends(get_db),
     admin_user: User = Depends(require_admin),
 ):
-    user_query = apply_admin_user_scope(db.query(User), admin_user)
-    vacancy_query = apply_admin_vacancy_scope(db.query(Created_Vacancy), admin_user)
-    active_vacancy_query = apply_admin_vacancy_scope(
-        db.query(Created_Vacancy).filter(Created_Vacancy.is_available == True),
-        admin_user,
-    )
-    candidate_query = db.query(Candidate).outerjoin(
-        Created_Vacancy,
-        Candidate.vacancy_id == Created_Vacancy.id,
-    )
-    if admin_user.role != Role.SUPERADMIN and admin_user.company_id:
-        candidate_query = candidate_query.filter(Created_Vacancy.company_id == admin_user.company_id)
+    """Returns dashboard summary stats.
 
-    test_session_query = apply_admin_user_scope(
-        db.query(TestSession).join(User, TestSession.user_id == User.id),
-        admin_user,
-    )
+    Each metric used to issue its own COUNT/AVG query. We now collapse each
+    table into a single aggregate round trip using conditional COUNTs.
+    """
 
-    average_score = (
-        test_session_query.with_entities(func.avg(TestSession.overall_points))
-        .filter(TestSession.is_finished == True)
-        .scalar()
+    is_superadmin = admin_user.role == Role.SUPERADMIN or not admin_user.company_id
+    company_id = admin_user.company_id
+
+    # --- Users ---
+    user_q = db.query(func.count(User.id))
+    if not is_superadmin:
+        user_q = user_q.filter(User.company_id == company_id)
+    total_users = user_q.scalar() or 0
+
+    # --- Vacancies (total + active in one trip) ---
+    vacancy_q = db.query(
+        func.count(Created_Vacancy.id),
+        func.count(case((Created_Vacancy.is_available == True, 1))),
     )
+    if not is_superadmin:
+        vacancy_q = vacancy_q.filter(Created_Vacancy.company_id == company_id)
+    total_vacancies, active_vacancies = vacancy_q.one()
+
+    # --- Candidates (joined to vacancy for scoping) ---
+    candidate_q = db.query(func.count(Candidate.id)).outerjoin(
+        Created_Vacancy, Candidate.vacancy_id == Created_Vacancy.id
+    )
+    if not is_superadmin:
+        candidate_q = candidate_q.filter(Created_Vacancy.company_id == company_id)
+    total_candidates = candidate_q.scalar() or 0
+
+    # --- Practices (total + active in one trip) ---
+    total_practices, active_practices = db.query(
+        func.count(Practice.practice_id),
+        func.count(case((Practice.is_valid == True, 1))),
+    ).one()
+
+    # --- Questions ---
+    total_questions = db.query(func.count(Question.id)).scalar() or 0
+
+    # --- Test sessions (count active/completed + avg in one trip) ---
+    session_q = db.query(
+        func.count(case((TestSession.is_finished == False, 1))),
+        func.count(case((TestSession.is_finished == True, 1))),
+        func.avg(case((TestSession.is_finished == True, TestSession.overall_points))),
+    ).join(User, TestSession.user_id == User.id)
+    if not is_superadmin:
+        session_q = session_q.filter(User.company_id == company_id)
+    active_sessions, completed_sessions, average_score = session_q.one()
 
     return {
-        "total_users": user_query.count(),
-        "total_candidates": candidate_query.count(),
-        "total_vacancies": vacancy_query.count(),
-        "active_vacancies": active_vacancy_query.count(),
-        "total_practices": db.query(Practice).count(),
-        "active_practices": db.query(Practice).filter(Practice.is_valid == True).count(),
-        "total_questions": db.query(Question).count(),
-        "active_test_sessions": test_session_query.filter(TestSession.is_finished == False).count(),
-        "completed_test_sessions": test_session_query.filter(TestSession.is_finished == True).count(),
+        "total_users": int(total_users),
+        "total_candidates": int(total_candidates),
+        "total_vacancies": int(total_vacancies or 0),
+        "active_vacancies": int(active_vacancies or 0),
+        "total_practices": int(total_practices or 0),
+        "active_practices": int(active_practices or 0),
+        "total_questions": int(total_questions),
+        "active_test_sessions": int(active_sessions or 0),
+        "completed_test_sessions": int(completed_sessions or 0),
         "average_test_score": int(average_score or 0),
     }
 
@@ -414,6 +441,12 @@ def get_student_stats(
     db: Session = Depends(get_db),
     admin_user: User = Depends(require_admin),
 ):
+    """Returns aggregated stats per student.
+
+    Previous implementation issued ~6 queries per row (N+1 explosion). This
+    version pulls the page of users in one query and then collects all
+    PracticeAssignment + TestSession aggregates in two grouped queries.
+    """
     query = apply_admin_user_scope(db.query(User).filter(User.role == Role.USER), admin_user)
 
     if group_name:
@@ -430,33 +463,61 @@ def get_student_stats(
             )
         )
 
-    total = query.count()
-    users = query.order_by(User.surname.asc(), User.name.asc()).offset(offset).limit(limit).all()
+    total = query.with_entities(func.count(User.id)).scalar() or 0
+    users = (
+        query.order_by(User.surname.asc(), User.name.asc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    if not users:
+        return {"items": [], "total": int(total), "offset": offset, "limit": limit}
+
+    user_ids = [u.id for u in users]
+
+    # Aggregate practice assignments per user in one trip.
+    assignment_rows = (
+        db.query(
+            PracticeAssignment.user_id,
+            func.count(PracticeAssignment.assignment_id).label("assigned"),
+            func.count(
+                case((PracticeAssignment.is_completed == True, 1))
+            ).label("completed"),
+        )
+        .filter(PracticeAssignment.user_id.in_(user_ids))
+        .group_by(PracticeAssignment.user_id)
+        .all()
+    )
+    assignment_map = {row.user_id: row for row in assignment_rows}
+
+    # Aggregate test sessions per user in one trip.
+    session_rows = (
+        db.query(
+            TestSession.user_id,
+            func.count(case((TestSession.is_finished == False, 1))).label("active"),
+            func.count(case((TestSession.is_finished == True, 1))).label("completed"),
+            func.avg(
+                case((TestSession.is_finished == True, TestSession.overall_points))
+            ).label("avg_score"),
+            func.max(TestSession.started_time).label("last_activity"),
+        )
+        .filter(TestSession.user_id.in_(user_ids))
+        .group_by(TestSession.user_id)
+        .all()
+    )
+    session_map = {row.user_id: row for row in session_rows}
 
     items = []
     for user in users:
-        assigned_tests = db.query(PracticeAssignment).filter(
-            PracticeAssignment.user_id == user.id
-        ).count()
-        completed_assignments = db.query(PracticeAssignment).filter(
-            PracticeAssignment.user_id == user.id,
-            PracticeAssignment.is_completed == True,
-        ).count()
-        active_sessions = db.query(TestSession).filter(
-            TestSession.user_id == user.id,
-            TestSession.is_finished == False,
-        ).count()
-        completed_sessions = db.query(TestSession).filter(
-            TestSession.user_id == user.id,
-            TestSession.is_finished == True,
-        ).count()
-        average_score = db.query(func.avg(TestSession.overall_points)).filter(
-            TestSession.user_id == user.id,
-            TestSession.is_finished == True,
-        ).scalar()
-        last_activity = db.query(func.max(TestSession.started_time)).filter(
-            TestSession.user_id == user.id
-        ).scalar()
+        a = assignment_map.get(user.id)
+        s = session_map.get(user.id)
+        assigned = int(a.assigned) if a else 0
+        completed_assignments = int(a.completed) if a else 0
+        active_sessions = int(s.active) if s else 0
+        completed_sessions = int(s.completed) if s else 0
+        avg_score = float(s.avg_score) if s and s.avg_score is not None else 0.0
+        last_activity = s.last_activity if s else None
 
         items.append(
             {
@@ -466,17 +527,17 @@ def get_student_stats(
                 "surname": user.surname,
                 "email": user.email,
                 "group_name": user.group_name,
-                "assigned_tests": assigned_tests,
+                "assigned_tests": assigned,
                 "completed_assignments": completed_assignments,
-                "pending_assignments": max(assigned_tests - completed_assignments, 0),
+                "pending_assignments": max(assigned - completed_assignments, 0),
                 "active_sessions": active_sessions,
                 "completed_sessions": completed_sessions,
-                "average_score": int(average_score or 0),
+                "average_score": int(avg_score),
                 "last_activity_at": last_activity,
             }
         )
 
-    return {"items": items, "total": total, "offset": offset, "limit": limit}
+    return {"items": items, "total": int(total), "offset": offset, "limit": limit}
 
 
 @router.get("/users", response_model=List[AdminUserOut])
@@ -630,12 +691,35 @@ def bulk_create_users(
     failed: list[dict] = []
     email_jobs = []
 
+    # Pre-fetch all potentially conflicting users in two queries (one for
+    # usernames, one for emails) instead of issuing 2 SELECTs per row.
+    requested_usernames = {item.username for item in data.users if item.username}
+    requested_emails = {str(item.email) for item in data.users if item.email}
+
+    username_map: dict[str, User] = {}
+    if requested_usernames:
+        rows = (
+            db.query(User)
+            .filter(User.username.in_(requested_usernames))
+            .all()
+        )
+        username_map = {u.username: u for u in rows}
+
+    email_map: dict[str, User] = {}
+    if requested_emails:
+        rows = (
+            db.query(User)
+            .filter(User.email.in_(requested_emails))
+            .all()
+        )
+        email_map = {u.email: u for u in rows}
+
     for item in data.users:
         existing = None
         if item.username:
-            existing = db.query(User).filter(User.username == item.username).first()
+            existing = username_map.get(item.username)
         if not existing:
-            existing = db.query(User).filter(User.email == str(item.email)).first()
+            existing = email_map.get(str(item.email))
 
         if existing:
             if not data.skip_existing:
@@ -1267,7 +1351,11 @@ def list_practice_assignments(
     admin_user: User = Depends(require_admin),
 ):
     get_practice_or_404(db, practice_id)
-    query = db.query(PracticeAssignment).join(User, PracticeAssignment.user_id == User.id)
+    query = (
+        db.query(PracticeAssignment)
+        .join(User, PracticeAssignment.user_id == User.id)
+        .options(joinedload(PracticeAssignment.user))
+    )
     query = query.filter(PracticeAssignment.practice_id == practice_id)
     query = apply_admin_user_scope(query, admin_user)
 
@@ -1346,7 +1434,12 @@ def send_practice_invitations(
     admin_user: User = Depends(require_admin),
 ):
     practice = get_practice_or_404(db, practice_id)
-    assignment_query = db.query(PracticeAssignment).join(User, PracticeAssignment.user_id == User.id)
+    # Pull the User joined in a single trip via joinedload (was N+1 before).
+    assignment_query = (
+        db.query(PracticeAssignment)
+        .join(User, PracticeAssignment.user_id == User.id)
+        .options(joinedload(PracticeAssignment.user))
+    )
     assignment_query = assignment_query.filter(PracticeAssignment.practice_id == practice_id)
     assignment_query = apply_admin_user_scope(assignment_query, admin_user)
 
@@ -1365,7 +1458,7 @@ def send_practice_invitations(
     result = PracticeInvitationResult(targeted=len(assignments), sent=0, failed=0, errors=[])
 
     for assignment in assignments:
-        user = db.query(User).filter(User.id == assignment.user_id).first()
+        user = assignment.user
         if not user:
             continue
         try:

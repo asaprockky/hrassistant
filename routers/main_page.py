@@ -1,7 +1,7 @@
 import os
 import shutil
 import uuid
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, HTTPException, UploadFile, File, Query
 from database.database import SessionLocal
 from routers.login import get_data, get_current_user
 from schemas.user_schema import VacancyResponse
@@ -14,16 +14,17 @@ router = APIRouter(prefix="/vacancies", tags=["Vacancies"])
 
 @router.post("", response_model=VacancyResponse)
 async def create_vacancy(data: VacancyResponse, db: Session = Depends(get_data), current_user: User = Depends(get_current_user)):
-    company = db.query(Company).filter(Company.id == current_user.company_id).first()
-    if not company:
+    if not current_user.company_id:
         raise HTTPException(status_code=400, detail="Company not found for this user")
+    # We already know the company_id from the authenticated user — skip the
+    # extra SELECT against `companies` that was happening on every create.
     new_vacancy = Created_Vacancy(
         job_name=data.job_name,
         job_description=data.job_description,
         tag = data.tag,
         start_date=data.start_date,
         end_date=data.end_date,
-        company_id=company.id
+        company_id=current_user.company_id
     )
 
     db.add(new_vacancy)
@@ -34,12 +35,24 @@ async def create_vacancy(data: VacancyResponse, db: Session = Depends(get_data),
 
 
 @router.get("", response_model=list[VacancyResponse])
-async def list_vacancies(db: Session = Depends(get_data), current_user: User = Depends(get_current_user)):
-    company = db.query(Company).filter(Company.id == current_user.company_id).first()
-    if not company:
+async def list_vacancies(
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_data),
+    current_user: User = Depends(get_current_user),
+):
+    if not current_user.company_id:
         raise HTTPException(status_code=400, detail="Company not found for this user")
-    vacancies = db.query(Created_Vacancy).filter(Created_Vacancy.company_id == company.id).all()
-    return vacancies
+    # Bound the page size and skip the redundant company lookup — the
+    # foreign key already lives on `current_user`.
+    return (
+        db.query(Created_Vacancy)
+        .filter(Created_Vacancy.company_id == current_user.company_id)
+        .order_by(Created_Vacancy.start_date.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
 
     
 @router.post("/resume-uploads")

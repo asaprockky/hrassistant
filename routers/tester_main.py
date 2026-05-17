@@ -4,11 +4,11 @@ from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 # Import your database and models
 from database.database import get_db
-from database.models import User, TestSession, Company 
+from database.models import User, TestSession, Company, Practice
 from routers.login import get_current_user, get_current_user_from_token
 from schemas.user_schema import PaginatedTests
 
@@ -18,11 +18,6 @@ router = APIRouter(prefix="/testing/sessions", tags=["Test Sessions"])
 # HELPER FUNCTIONS & DEPENDENCIES
 # ==========================================
 
-def get_company_name(db: Session, company_id: uuid.UUID) -> str:
-    """Fetches the company name using its ID."""
-    company = db.query(Company.name).filter(Company.id == company_id).first()
-    return company[0] if company else "Unknown Company"
-
 async def get_current_user_ws(websocket: WebSocket, token: str):
     """Dependency for WebSocket connections."""
     user = get_current_user_from_token(token)
@@ -31,12 +26,19 @@ async def get_current_user_ws(websocket: WebSocket, token: str):
         raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION)
     return user
 
-def format_test_session(session: TestSession, db: Session) -> dict:
-    """Helper function to unify the response format to strict camelCase."""
-    company_name = get_company_name(db, session.user.company_id) if session.user.company_id else "Unassigned Test"
+def format_test_session(session: TestSession) -> dict:
+    """Format a TestSession into the API response shape.
+
+    Caller MUST eager-load `session.user.company` and `session.practice` so
+    this function never triggers extra queries (avoids per-row N+1).
+    """
+    company = session.user.company if session.user else None
+    company_name = company.name if company else "Unassigned Test"
+
+    practice = session.practice
     score = int(session.overall_points or 0)
     is_finished = session.is_finished
-    
+
     if is_finished:
         status_label = f"Passed ({score}%)" if score >= 60 else "Failed"
         status_text = "Completed"
@@ -48,15 +50,67 @@ def format_test_session(session: TestSession, db: Session) -> dict:
 
     return {
         "testId": str(session.session_id),
-        "title": session.practice.title,
+        "title": practice.title if practice else "",
         "createdBy": company_name,
-        "createdAt": session.started_time,  
-        "deadline": session.practice.deadline,
+        "createdAt": session.started_time,
+        "deadline": practice.deadline if practice else None,
         "score": score,
         "status": status_text,
         "statusLabel": status_label,
-        "actionUrl": action_url
+        "actionUrl": action_url,
     }
+
+
+def _paginate_sessions(
+    db: Session,
+    user_id: uuid.UUID,
+    page: int,
+    size: int,
+    is_finished: Optional[bool],
+) -> dict:
+    """Shared logic to paginate TestSession rows with eager-loaded relations."""
+    filters = [TestSession.user_id == user_id]
+    if is_finished is not None:
+        filters.append(TestSession.is_finished == is_finished)
+
+    total_items = (
+        db.query(TestSession)
+        .filter(*filters)
+        .with_entities(TestSession.session_id)
+        .count()
+    )
+
+    if total_items == 0:
+        return {
+            "items": [],
+            "total": 0,
+            "page": page,
+            "size": size,
+            "totalPages": 0,
+        }
+
+    offset = (page - 1) * size
+    sessions = (
+        db.query(TestSession)
+        .options(
+            joinedload(TestSession.user).joinedload(User.company),
+            joinedload(TestSession.practice),
+        )
+        .filter(*filters)
+        .order_by(TestSession.started_time.desc())
+        .offset(offset)
+        .limit(size)
+        .all()
+    )
+
+    return {
+        "items": [format_test_session(t) for t in sessions],
+        "total": total_items,
+        "page": page,
+        "size": size,
+        "totalPages": math.ceil(total_items / size),
+    }
+
 
 # ==========================================
 # ENDPOINTS
@@ -66,72 +120,30 @@ def format_test_session(session: TestSession, db: Session) -> dict:
 def get_active_tests(
     page: int = Query(1, ge=1, description="Page number"),
     size: int = Query(10, ge=1, le=100, description="Number of items per page"),
-    db: Session = Depends(get_db), 
-    user: User = Depends(get_current_user)
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """Retrieves a paginated list of active tests assigned to the user."""
-    base_query = db.query(TestSession).filter(
-        TestSession.user_id == user.id,
-        TestSession.is_finished == False
-    ).order_by(TestSession.started_time.desc())
-    
-    total_items = base_query.count()
-    offset = (page - 1) * size
-    active_tests = base_query.offset(offset).limit(size).all()
-    
-    return {
-        "items": [format_test_session(t, db) for t in active_tests],
-        "total": total_items,
-        "page": page,
-        "size": size,
-        "totalPages": math.ceil(total_items / size) if total_items > 0 else 0
-    }
+    return _paginate_sessions(db, user.id, page, size, is_finished=False)
+
 
 @router.get("/completed", response_model=PaginatedTests)
 def get_test_history(
     page: int = Query(1, ge=1, description="Page number"),
     size: int = Query(10, ge=1, le=100, description="Number of items per page"),
-    db: Session = Depends(get_db), 
-    user: User = Depends(get_current_user)
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """Retrieves a paginated list of finished test sessions assigned to the user."""
-    base_query = db.query(TestSession).filter(
-        TestSession.user_id == user.id, 
-        TestSession.is_finished == True
-    ).order_by(TestSession.started_time.desc())
+    return _paginate_sessions(db, user.id, page, size, is_finished=True)
 
-    total_items = base_query.count()
-    offset = (page - 1) * size
-    completed_tests = base_query.offset(offset).limit(size).all()
-        
-    return {
-        "items": [format_test_session(t, db) for t in completed_tests],
-        "total": total_items,
-        "page": page,
-        "size": size,
-        "totalPages": math.ceil(total_items / size) if total_items > 0 else 0
-    }
 
 @router.get("/all", response_model=PaginatedTests)
 def get_all_tests(
     page: int = Query(1, ge=1, description="Page number"),
     size: int = Query(10, ge=1, le=100, description="Number of items per page"),
-    db: Session = Depends(get_db), 
-    user: User = Depends(get_current_user)
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
 ):
     """Retrieves a paginated list of ALL test sessions (both active and completed)."""
-    base_query = db.query(TestSession).filter(
-        TestSession.user_id == user.id
-    ).order_by(TestSession.started_time.desc())
-
-    total_items = base_query.count()
-    offset = (page - 1) * size
-    all_sessions = base_query.offset(offset).limit(size).all()
-        
-    return {
-        "items": [format_test_session(t, db) for t in all_sessions],
-        "total": total_items,
-        "page": page,
-        "size": size,
-        "totalPages": math.ceil(total_items / size) if total_items > 0 else 0
-    }
+    return _paginate_sessions(db, user.id, page, size, is_finished=None)
