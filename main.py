@@ -44,6 +44,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://admin-talent-flow.vercel.app",
+        "http://localhost:5174",
+        "http://localhost:5175",
         "http://localhost:3000",
         "http://localhost:5173",
         "https://hr-assistant-j2u1.vercel.app",
