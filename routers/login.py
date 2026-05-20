@@ -3,7 +3,6 @@ from email.message import EmailMessage
 import random
 import smtplib
 import ssl
-from fastapi import WebSocket, WebSocketException, Query
 
 from typing import Any, Dict, Optional
 from fastapi import APIRouter, Depends, HTTPException, Response, status, Request
@@ -109,17 +108,6 @@ def get_current_user_from_token(token: str, db: Session) -> Optional[User]:
         # Catches expired tokens, bad signatures, and invalid UUID strings
         return None
 
-async def get_current_user_ws(
-    websocket: WebSocket, 
-    token: str = Query(...), # Forces the user to provide ?token= in the URL
-    db: Session = Depends(get_db)
-):
-    user = get_current_user_from_token(token, db)
-    if not user:
-        # Close the connection cleanly if authentication fails
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION)
-    return user 
 def get_current_admin(current_user = Depends(get_current_user)):
     # Adjust "Role.ADMIN" to match exactly how you defined it in your Enum
     if current_user.role != Role.ADMIN:

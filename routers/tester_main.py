@@ -1,30 +1,21 @@
 import math
 import uuid
-from datetime import datetime
-from typing import List, Optional
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketException, status
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session, joinedload
 
 # Import your database and models
 from database.database import get_db
-from database.models import User, TestSession, Company, Practice
-from routers.login import get_current_user, get_current_user_from_token
+from database.models import User, TestSession
+from routers.login import get_current_user
 from schemas.user_schema import PaginatedTests
 
 router = APIRouter(prefix="/testing/sessions", tags=["Test Sessions"])
 
 # ==========================================
-# HELPER FUNCTIONS & DEPENDENCIES
+# HELPER FUNCTIONS
 # ==========================================
-
-async def get_current_user_ws(websocket: WebSocket, token: str):
-    """Dependency for WebSocket connections."""
-    user = get_current_user_from_token(token)
-    if not user:
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
-        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION)
-    return user
 
 def format_test_session(session: TestSession) -> dict:
     """Format a TestSession into the API response shape.

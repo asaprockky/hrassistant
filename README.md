@@ -1,6 +1,6 @@
 # HR Assistant API
 
-FastAPI backend for TalentFlow-style HR automation: user authentication, company vacancies, resume uploads, candidate dashboards, admin operations, test assignment, live assessment over WebSocket, and adaptive question difficulty.
+FastAPI backend for TalentFlow-style HR automation: user authentication, company vacancies, resume uploads, candidate dashboards, admin operations, test assignment, HTTP-driven live assessment, and adaptive question difficulty.
 
 Production base URL used by the existing API notes:
 
@@ -18,7 +18,7 @@ Interactive API docs are available at `/docs` and `/redoc` when the app is runni
 
 ## What This Backend Does
 
-This service is the backend API layer for an HR assistant platform. It stores companies, users, vacancies, candidates, questions, practices, assignments, test sessions, and answers. It also has two AI-adjacent pieces: an adaptive test difficulty recalculation loop inside the live testing websocket, and a prototype Google Gemini resume-review script.
+This service is the backend API layer for an HR assistant platform. It stores companies, users, vacancies, candidates, questions, practices, assignments, test sessions, and answers. It also has two AI-adjacent pieces: an adaptive test difficulty recalculation loop inside the live testing HTTP endpoints, and a prototype Google Gemini resume-review script.
 
 The main application is created in `main.py`. Routers are mounted from `routers/`, database models live in `database/models.py`, authentication helpers live in `auth/jwt_handler.py`, and request/response schemas live in `schemas/user_schema.py`.
 
@@ -31,11 +31,11 @@ The main application is created in `main.py`. Routers are mounted from `routers/
 | `database/database.py` | Builds the SQLAlchemy engine, session factory, base model, and DB dependency. |
 | `database/models.py` | SQLAlchemy models for companies, users, vacancies, candidates, questions, practices, assignments, test sessions, and answers. |
 | `database/enums.py` | Role enum: `USER`, `ADMIN`, `SUPERADMIN`. |
-| `routers/login.py` | Login, registration, password hashing, cookie/header auth, websocket-token auth helpers. |
+| `routers/login.py` | Login, registration, password hashing, and cookie/header JWT auth helpers. |
 | `routers/main_page.py` | Vacancy create/list endpoints and PDF resume upload/extraction. |
 | `routers/candidate_dashboard.py` | Candidate pipeline summary and recent applications. |
 | `routers/admin_panel.py` | Admin dashboard, users, companies, vacancies, candidates, questions, practices, assignments, and test sessions. |
-| `routers/questions.py` | Live testing WebSocket plus assignment/result REST endpoints. |
+| `routers/questions.py` | Live testing HTTP session lifecycle (start/next/answer/finish/result) plus assignment/result REST endpoints. |
 | `routers/tester_main.py` | Candidate test-session lists: active, completed, all. |
 | `routers/email.py` | Email verification via Gmail SMTP and legacy seed/schema helper code. |
 | `routers/user_profile.py` | Current user's profile and test activity. |
@@ -56,7 +56,6 @@ The main application is created in `main.py`. Routers are mounted from `routers/
 Client app
   |
   | HTTP: REST endpoints with cookie or Bearer JWT
-  | WS: /testing/practices/{practice_id}/ws?token=<jwt>
   v
 FastAPI app in main.py
   |
@@ -65,7 +64,7 @@ FastAPI app in main.py
   +-- Vacancy and resume-upload router
   +-- Candidate dashboard router
   +-- Admin router
-  +-- Testing websocket/session routers
+  +-- Testing session lifecycle router
   |
   v
 SQLAlchemy session dependency
@@ -79,8 +78,7 @@ The core request pattern is:
 1. The client logs in through `/auth/login`.
 2. The API creates a JWT signed with the app secret.
 3. The token is returned in the JSON response and also set as an `access_token` cookie.
-4. Protected HTTP endpoints read the token from either the cookie or `Authorization: Bearer <token>`.
-5. The WebSocket endpoint reads the same token from the `token` query parameter because browser websocket constructors cannot reliably set custom authorization headers.
+4. Protected HTTP endpoints read the token from either the cookie or `Authorization: Bearer <token>`. The testing flow is entirely HTTP — no WebSocket is required.
 
 ## Configuration And Secrets
 
@@ -260,218 +258,353 @@ Roles:
 - `USER` can use candidate/user routes.
 - `ADMIN` and `SUPERADMIN` can use admin routes in `routers/admin_panel.py`.
 
-## WebSocket Testing Protocol
+## HTTP Testing Protocol
 
-The live assessment flow is built in `routers/questions.py`.
+The live assessment flow used to run over a single WebSocket. It is now a set
+of normal HTTP endpoints under `/testing/...` so clients that can't use
+WebSockets (mobile webviews, restrictive corporate networks, hosted previews,
+etc.) can still take a test. All endpoints require a normal JWT in the
+`access_token` cookie or `Authorization: Bearer <token>` header.
 
-Endpoint:
-
-```text
-ws://127.0.0.1:8000/testing/practices/{practice_id}/ws?token=<access_token>
-```
-
-Production should use TLS:
+### State Machine
 
 ```text
-wss://api.talentflow.uz/testing/practices/{practice_id}/ws?token=<access_token>
+  +------------------+
+  | (not started)    |
+  +--------+---------+
+           | POST /practices/{id}/sessions      -> creates TestSession
+           v
+  +------------------+
+  | in_progress      |
+  +--------+---------+
+           | GET  /sessions/{id}/next-question  -> next unanswered question
+           | POST /sessions/{id}/answers        -> score one question
+           |                                    -> auto-finishes when last
+           | POST /sessions/{id}/finish         -> manual finalize (idempotent)
+           v
+  +------------------+
+  | finished         |
+  +------------------+
+           | GET  /sessions/{id}                -> progress snapshot
+           | GET  /sessions/{id}/result         -> full per-question result
+           | GET  /sessions/{id}/answers        -> answer list w/ correctness
 ```
 
-### Why The Token Is In The Query String
+Re-entry is blocked: each (user, practice) pair can have at most one
+`TestSession`. `POST /practices/{id}/sessions` returns `409 Conflict` with the
+existing session id so the client can resume or view results without guessing.
 
-Browser WebSocket APIs do not let frontend code reliably set arbitrary headers such as `Authorization`. Because of that, the backend reads `token` from the websocket URL query parameter:
+Duration is enforced server-side. If the user lets the timer expire,
+`/next-question` and `/answers` auto-finish the session — the frontend no
+longer has to call `finish` on a timer.
 
-```python
-token: str = Query(...)
-```
+### Pre-Test
 
-The dependency decodes the JWT, loads the user from the database, and rejects the connection with websocket close code `1008` when the token is missing, expired, invalid, or points to a missing user.
+#### `GET /testing/practices/{practice_id}`
 
-Because query strings can appear in logs, production should use `wss://`, avoid logging full websocket URLs, and keep token lifetimes short.
-
-### Lifecycle
-
-1. Client opens the websocket with a valid JWT query token.
-2. Backend authenticates the token and accepts the connection.
-3. Client sends `start_test`.
-4. Backend checks assignment, completion state, existing sessions, practice validity, and deadline.
-5. Backend creates a `TestSession` and returns `test_started`.
-6. Client repeatedly sends `get_question`.
-7. Backend returns the next unanswered question in the order stored in `Practice.question_ids`.
-8. Client sends `submit_answer` with the selected option UUID and time spent.
-9. Backend stores `UserAnswer`, awards weighted points, updates `TestSession.overall_points`, recalculates question difficulty, and returns `answer_result`.
-10. When no questions remain, or the client sends `finish_test`, backend marks the session and assignment complete, sends `test_finished`, and closes the connection.
-
-### Client Example
-
-```js
-const token = "<access_token>";
-const practiceId = "<practice_uuid>";
-const ws = new WebSocket(
-  `ws://127.0.0.1:8000/testing/practices/${practiceId}/ws?token=${encodeURIComponent(token)}`
-);
-
-ws.onopen = () => {
-  ws.send(JSON.stringify({ action: "start_test" }));
-};
-
-ws.onmessage = (event) => {
-  const message = JSON.parse(event.data);
-
-  if (message.event === "test_started") {
-    ws.send(JSON.stringify({ action: "get_question" }));
-  }
-
-  if (message.event === "question_data") {
-    console.log("Render this question:", message);
-  }
-
-  if (message.event === "answer_result") {
-    ws.send(JSON.stringify({ action: "get_question" }));
-  }
-
-  if (message.event === "test_finished") {
-    console.log("Final score:", message.final_score);
-  }
-};
-```
-
-### `start_test`
-
-Client sends:
+Metadata for the candidate test page. Does not include the questions
+themselves so the question bank isn't leaked before the user actually starts.
 
 ```json
 {
-  "action": "start_test"
+  "practice_id": "practice-uuid",
+  "title": "Backend Engineer Screening",
+  "description": "30 minutes, multiple choice.",
+  "duration_minutes": 30,
+  "deadline": "2026-01-30T18:00:00",
+  "question_count": 10,
+  "tags": ["backend", "sql"]
 }
 ```
 
-Backend checks:
+#### `GET /testing/practices/{practice_id}/eligibility`
 
-- the user has a `PracticeAssignment` for the requested practice;
-- the assignment is not already completed;
-- the user has not already created a `TestSession` for that practice;
-- the practice exists and `is_valid` is true;
-- the deadline has not passed.
+Tells the frontend which CTA to show — `Start`, `Resume`, `View result`, etc.
+— without having to POST and parse a 4xx.
 
-Success response:
+```json
+{
+  "status": "eligible",
+  "can_start": true,
+  "can_resume": false,
+  "session_id": null,
+  "reason": null
+}
+```
+
+`status` is one of `eligible`, `in_progress`, `finished`, `duration_exceeded`,
+`assignment_completed`, `deadline_passed`, `not_invited`, `not_found`. When
+`status` is `in_progress`, the frontend should use the returned `session_id`
+to resume.
+
+#### `GET /testing/practices/{practice_id}/session`
+
+Shortcut: returns the user's session for the given practice (if any), or
+`null`. Useful right before showing the test page so the client knows
+immediately whether to render the start screen, the in-progress screen, or
+the result screen.
+
+### Session Lifecycle
+
+#### `POST /testing/practices/{practice_id}/sessions`
+
+Starts a session. Checks invitation, assignment completion, re-entry, and
+deadline — same rules as the old `start_test` WS action.
+
+Success response (`201 Created`):
 
 ```json
 {
   "event": "test_started",
-  "session_id": "uuid",
+  "session_id": "session-uuid",
+  "practice_id": "practice-uuid",
+  "started_at": "2026-01-15T11:00:00",
+  "duration_minutes": 30,
+  "ends_at": "2026-01-15T11:30:00",
+  "total_questions": 10,
   "quantity": 10,
   "duration": 30
 }
 ```
 
-Possible errors:
+`quantity` and `duration` are kept alongside the new field names so any
+frontend that already reads the legacy WS payload keeps working.
 
-```json
-{ "error": "Test already completed or not assigned." }
-{ "error": "Re-entry is not allowed." }
-{ "error": "Practice not found." }
-{ "error": "Practice deadline has passed." }
-```
+Failure modes:
 
-### `get_question`
+- `403 Not invited` — no `PracticeAssignment` for this user.
+- `409 Already completed` — assignment is already marked completed.
+- `409 Re-entry not allowed` — a session already exists; the response body
+  carries the existing `session_id` so the frontend can resume / view.
+- `409 Deadline has passed`.
+- `404 Practice not found` (or `is_valid=False`).
 
-Client sends:
+#### `GET /testing/sessions/{session_id}`
+
+Progress snapshot. Cheap to poll for the in-progress timer / progress bar.
 
 ```json
 {
-  "action": "get_question"
+  "session_id": "session-uuid",
+  "practice_id": "practice-uuid",
+  "is_finished": false,
+  "answered_count": 3,
+  "correct_count": 2,
+  "total_questions": 10,
+  "overall_points": 20.0,
+  "started_at": "2026-01-15T11:00:00",
+  "ends_at": "2026-01-15T11:30:00",
+  "seconds_remaining": 1234
 }
 ```
 
-Success response:
+#### `GET /testing/sessions/{session_id}/next-question`
+
+Returns the next unanswered question, in `Practice.question_ids` order. If
+there are no remaining questions, or the duration has expired, the session
+is auto-finalized and the response is the `test_finished` payload.
+
+Question payload:
 
 ```json
 {
   "event": "question_data",
-  "id": "question_uuid",
-  "text": "Which SQL clause is used to filter records?",
+  "session_id": "session-uuid",
+  "id": "question-uuid",
+  "text": "Which SQL clause filters rows?",
   "options": [
-    { "id": "option_uuid_1", "text": "ORDER BY" },
-    { "id": "option_uuid_2", "text": "WHERE" }
+    { "id": "option-uuid-1", "text": "ORDER BY" },
+    { "id": "option-uuid-2", "text": "WHERE" }
   ],
   "category": "SQL",
-  "points": 5.0
+  "points": 5.0,
+  "progress": {
+    "answered_count": 3,
+    "total_questions": 10,
+    "remaining_count": 7
+  }
 }
 ```
 
-The correct answer is intentionally not sent in `question_data`.
+The correct answer is intentionally not included.
 
-### `submit_answer`
-
-Client sends:
+Auto-finish payload (when nothing is left to answer):
 
 ```json
 {
-  "action": "submit_answer",
-  "question_id": "question_uuid",
-  "user_answer": "selected_option_uuid",
+  "event": "test_finished",
+  "session_id": "session-uuid",
+  "final_score": 82.5,
+  "reason": "all_answered"
+}
+```
+
+`reason` is one of `all_answered`, `duration_exceeded`.
+
+#### `POST /testing/sessions/{session_id}/answers`
+
+Submit a single answer.
+
+Request:
+
+```json
+{
+  "question_id": "question-uuid",
+  "user_answer": "selected-option-uuid",
   "time_spent": 18.4
 }
 ```
 
-Success response when more questions remain:
+Response when the session is still in progress:
 
 ```json
 {
   "event": "answer_result",
   "is_correct": true,
-  "correct_answer": "correct_option_uuid",
+  "correct_answer": "correct-option-uuid",
   "points_awarded": 12.5,
-  "new_difficulty": 0.61
+  "new_difficulty": 0.61,
+  "answered_count": 4,
+  "total_questions": 10,
+  "is_finished": false,
+  "final_score": null
 }
 ```
 
-The scoring formula is:
+Response when this answer is the last one (session auto-finalizes):
+
+```json
+{
+  "event": "answer_result",
+  "is_correct": false,
+  "correct_answer": "correct-option-uuid",
+  "points_awarded": 0.0,
+  "new_difficulty": 0.72,
+  "answered_count": 10,
+  "total_questions": 10,
+  "is_finished": true,
+  "final_score": 67.5
+}
+```
+
+The scoring formula is unchanged:
 
 ```text
 points_awarded = (question.points / sum(all practice question points)) * 100
 ```
 
-The adaptive difficulty formula lives in `utils/ai_logic.py`. It combines failure rate and average time spent:
+The adaptive difficulty formula lives in `utils/ai_logic.py`:
 
 ```text
 z = (0.8 * failure_rate) + (0.2 * min(avg_time / 60, 1)) - 0.5
 difficulty = sigmoid(z)
 ```
 
-That means the app treats incorrect answers as the strongest signal and time pressure as a secondary signal. Difficulty stays in the `0..1` range.
+Failure modes:
 
-### `finish_test`
+- `400` — question isn't part of this practice.
+- `404` — session not found / not owned / question not found.
+- `409 Session already finished`.
+- `409 Duration expired` — session is also auto-finalized.
+- `409 Question already answered` — duplicate submission for the same
+  `(session_id, question_id)`.
 
-Client sends:
+#### `POST /testing/sessions/{session_id}/finish`
 
-```json
-{
-  "action": "finish_test"
-}
-```
-
-Backend response:
+Manually finalize a session. Idempotent — calling on an already finished
+session just returns the final state.
 
 ```json
 {
   "event": "test_finished",
+  "session_id": "session-uuid",
   "final_score": 82.5,
+  "is_finished": true,
+  "answered_count": 10,
+  "total_questions": 10,
   "message": "Assignment completed and locked."
 }
 ```
 
-After this message, the backend closes the websocket.
+#### `GET /testing/sessions/{session_id}/answers`
 
-### WebSocket Rules To Build The Frontend Around
+List every answer in the session with the question text and the correct
+option id — useful for a review screen.
 
-- All messages are JSON.
-- The client must send `start_test` before requesting or submitting questions.
-- `session_id` is stored server-side per websocket connection; the client does not need to send it back.
-- Re-entry is blocked: one user cannot start a second session for the same practice.
-- Completed assignments are locked.
-- The server closes the websocket after final completion.
-- A browser refresh during the test can leave an unfinished session that blocks re-entry because the current implementation creates the session at start.
+```json
+{
+  "items": [
+    {
+      "id": "answer-uuid",
+      "question_id": "question-uuid",
+      "question_text": "Which SQL clause filters rows?",
+      "user_answer": "option-uuid-1",
+      "is_correct": false,
+      "correct_answer_id": "option-uuid-2",
+      "points_awarded": 0.0,
+      "time_spent": 18.4
+    }
+  ],
+  "total": 1
+}
+```
+
+#### `GET /testing/sessions/{session_id}/result`
+
+A progress snapshot plus the full answers list in one call — convenient for
+the post-test result page.
+
+### Client Example
+
+```js
+const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+
+// 1. Start a session (or recover the existing one)
+let sessionId;
+const start = await fetch(`/testing/practices/${practiceId}/sessions`, { method: "POST", headers });
+if (start.status === 201) {
+  sessionId = (await start.json()).session_id;
+} else if (start.status === 409) {
+  // Re-entry blocked — the existing session id is in the error body.
+  const body = await start.json();
+  sessionId = body.detail.session_id;
+}
+
+// 2. Loop: fetch next question, submit answer, repeat.
+while (true) {
+  const q = await fetch(`/testing/sessions/${sessionId}/next-question`, { headers }).then(r => r.json());
+  if (q.event === "test_finished") {
+    console.log("Final score:", q.final_score);
+    break;
+  }
+
+  const optionId = chooseOption(q.options);
+  const res = await fetch(`/testing/sessions/${sessionId}/answers`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ question_id: q.id, user_answer: optionId, time_spent: 12.0 }),
+  }).then(r => r.json());
+
+  if (res.is_finished) {
+    console.log("Final score:", res.final_score);
+    break;
+  }
+}
+```
+
+### Rules To Build The Frontend Around
+
+- Bearer JWT or `access_token` cookie on every call.
+- `POST /sessions` is single-shot per `(user, practice)`; on `409`, read
+  `detail.session_id` from the response body and resume.
+- Sessions auto-finalize when there are no questions left or the timer
+  expires; the frontend doesn't have to call `finish` on a timer.
+- Calling `finish` more than once is safe.
+- The correct answer is never sent in `next-question`. It is only returned
+  after the answer is submitted (or via the `/answers` / `/result` endpoints
+  which are available regardless of finish state).
+- A browser refresh during the test is safe: refetch
+  `/sessions/{id}` + `/sessions/{id}/next-question` to resume.
 
 ## REST API
 
@@ -526,8 +659,17 @@ Resume upload currently extracts text only. It does not create a `Candidate` row
 
 | Method | Path | Auth | Purpose |
 | --- | --- | --- | --- |
-| `WS` | `/testing/practices/{practice_id}/ws?token=<jwt>` | User via query token | Live assessment loop. |
-| `GET` | `/testing/practices/{practice_id}/result` | User | Returns the current user's score and finish state for a practice. |
+| `GET` | `/testing/practices/{practice_id}` | User | Practice metadata for the candidate test page (no questions leaked). |
+| `GET` | `/testing/practices/{practice_id}/eligibility` | User | Whether the user can start / must resume / has already finished. |
+| `GET` | `/testing/practices/{practice_id}/session` | User | The user's session for this practice (active or finished) or `null`. |
+| `POST` | `/testing/practices/{practice_id}/sessions` | User | Create a new `TestSession` (re-entry blocked, 409 returns existing id). |
+| `GET` | `/testing/sessions/{session_id}` | User | Progress snapshot — score, answered count, time remaining. |
+| `GET` | `/testing/sessions/{session_id}/next-question` | User | Next unanswered question, or auto-finish payload. |
+| `POST` | `/testing/sessions/{session_id}/answers` | User | Submit one answer; scores, recalculates difficulty, may auto-finish. |
+| `GET` | `/testing/sessions/{session_id}/answers` | User | List every answer in the session with correctness info. |
+| `POST` | `/testing/sessions/{session_id}/finish` | User | Idempotent manual finalize. |
+| `GET` | `/testing/sessions/{session_id}/result` | User | Progress snapshot + full per-question result. |
+| `GET` | `/testing/practices/{practice_id}/result` | User | Latest score and finish state for a practice by id (legacy shortcut). |
 | `GET` | `/testing/assignments/{filter_option}` | User | Lists available assignments. `filter_option` can be `latest`, `all`, or a numeric limit. |
 | `GET` | `/testing/sessions/active?page=1&size=10` | User | Paginated active test sessions. |
 | `GET` | `/testing/sessions/completed?page=1&size=10` | User | Paginated completed test sessions. |
@@ -630,7 +772,7 @@ The response returns generated usernames and passwords once, plus invitation del
 
 #### Assignment Security
 
-Tests are invitation-only. The candidate assignment list only returns practices where a `practice_assignments` row exists for the current user. The websocket also checks assignment membership before starting a test and closes with policy violation code `1008` when a user is not invited. The result endpoint now also returns `403` for non-invited users.
+Tests are invitation-only. The candidate assignment list only returns practices where a `practice_assignments` row exists for the current user. `POST /testing/practices/{id}/sessions` returns `403` if the user has no `PracticeAssignment` for the practice. The result endpoint also returns `403` for non-invited users.
 
 ## Resume AI Prototype
 
@@ -747,8 +889,22 @@ curl "http://127.0.0.1:8000/users/me" \
   -H "Authorization: Bearer <access_token>"
 ```
 
-For websocket testing, create or seed a practice, assign it to the user, log in, then connect to:
+For testing the assessment flow, create or seed a practice, assign it to the user, log in, then run through the HTTP session lifecycle:
 
-```text
-ws://127.0.0.1:8000/testing/practices/{practice_id}/ws?token=<access_token>
+```bash
+# 1. Create a session
+curl -X POST "http://127.0.0.1:8000/testing/practices/<practice_uuid>/sessions" \
+  -H "Authorization: Bearer <access_token>"
+
+# 2. Fetch the next question
+curl "http://127.0.0.1:8000/testing/sessions/<session_uuid>/next-question" \
+  -H "Authorization: Bearer <access_token>"
+
+# 3. Submit an answer
+curl -X POST "http://127.0.0.1:8000/testing/sessions/<session_uuid>/answers" \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"question_id":"<question_uuid>","user_answer":"<option_uuid>","time_spent":12.0}'
 ```
+
+See the **HTTP Testing Protocol** section above for the full state machine.
