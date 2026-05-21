@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timedelta
-from sqlalchemy import JSON, Column, Date, Integer, String, ForeignKey, Boolean, Text, Float, DateTime, Enum as SAEnum
+from sqlalchemy import JSON, Column, Date, Integer, String, ForeignKey, Boolean, Text, Float, DateTime, Enum as SAEnum, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID, ARRAY, JSON
 from sqlalchemy.sql import func
@@ -49,6 +49,9 @@ class User(Base):
     # Relationships
     # FIX: Changed relationship target from StartedTest (old model) to TestSession (new model)
     test_sessions = relationship("TestSession", back_populates="user")
+    candidate_profile = relationship("CandidateProfile", back_populates="user", uselist=False, cascade="all, delete-orphan")
+    certificates = relationship("CandidateCertificate", back_populates="user", cascade="all, delete-orphan")
+    resume_reviews = relationship("CandidateResumeReview", back_populates="user", cascade="all, delete-orphan")
     
     # Removed the redundant or incorrect user_answers relationship here, 
     # as the answers are linked via TestSession.
@@ -92,6 +95,67 @@ class Candidate(Base):
     vacancy_id = Column(UUID(as_uuid=True), ForeignKey("created_vacancies.id"))
     vacancy = relationship("Created_Vacancy", back_populates="candidates")
     user = relationship("User") # Add relationship to User
+
+
+class CandidateProfile(Base):
+    __tablename__ = "candidate_profiles"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, unique=True, index=True)
+    headline = Column(String(150), nullable=True)
+    location = Column(String(100), nullable=True)
+    university = Column(String(150), nullable=True)
+    graduation_year = Column(String(10), nullable=True)
+    phone = Column(String(30), nullable=True)
+    portfolio_url = Column(String(255), nullable=True)
+    linkedin_url = Column(String(255), nullable=True)
+    open_to_work = Column(Boolean, default=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User", back_populates="candidate_profile")
+
+
+class CandidateCertificate(Base):
+    __tablename__ = "candidate_certificates"
+    __table_args__ = (
+        Index("ix_candidate_certificates_user_status", "user_id", "status"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    title = Column(String(150), nullable=False)
+    provider = Column(String(150), nullable=True)
+    issued_at = Column(Date, nullable=True)
+    status = Column(String(30), nullable=False, default="pending")
+    credential_id = Column(String(80), nullable=True, unique=True)
+    badge_label = Column(String(60), nullable=True)
+    tags = Column(ARRAY(String), nullable=False, default=list)
+    file_url = Column(String(255), nullable=True)
+    external_url = Column(String(255), nullable=True)
+    verification_notes = Column(Text, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User", back_populates="certificates")
+
+
+class CandidateResumeReview(Base):
+    __tablename__ = "candidate_resume_reviews"
+    __table_args__ = (
+        Index("ix_candidate_resume_reviews_user_created", "user_id", "created_at"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True)
+    filename = Column(String(255), nullable=False)
+    file_url = Column(String(255), nullable=True)
+    score = Column(Float, default=0.0)
+    analysis_summary = Column(Text, nullable=True)
+    strengths = Column(JSON, nullable=False, default=list)
+    suggestions = Column(JSON, nullable=False, default=list)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    user = relationship("User", back_populates="resume_reviews")
 #### TESTING PART
 
 # --- Question Model ---
