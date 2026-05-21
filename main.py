@@ -49,13 +49,13 @@ app.add_middleware(
         "http://localhost:3000",
         "http://localhost:5173",
         "https://hr-assistant-j2u1.vercel.app",
-        "https://ai-talent-flow.vercel.app"
+        "https://ai-talent-flow.vercel.app",
+        "https://studenttalent-flow-ai.vercel.app", 
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
 def get_data():
     db = SessionLocal()
     try:
