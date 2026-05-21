@@ -1,6 +1,6 @@
 # HR Assistant API
 
-FastAPI backend for TalentFlow-style HR automation: user authentication, company vacancies, resume uploads, candidate dashboards, admin operations, test assignment, HTTP-driven live assessment, and adaptive question difficulty.
+FastAPI backend  for TalentFlow-style HR automation: user authentication, company vacancies, resume uploads, candidate dashboards, admin operations, test assignment, HTTP-driven live assessment, and adaptive question difficulty.
 
 Production base URL used by the existing API notes:
 
