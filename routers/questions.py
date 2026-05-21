@@ -101,33 +101,14 @@ def _deadline_exceeded(session: TestSession, practice: Practice) -> bool:
     return _utcnow() > cutoff
 
 
-def _finish_session(
-    db: Session,
-    session: TestSession,
-    *,
-    reason: Optional[str] = None,
-) -> TestSession:
+def _finish_session(db: Session, session: TestSession) -> TestSession:
     """Idempotent finalize: marks the session finished and the matching
     PracticeAssignment completed. Safe to call multiple times.
-
-    When `reason` is provided (e.g. "abandoned", "cheating_detected",
-    "duration_exceeded") and the meta row exists, it is recorded on
-    `TestSessionMeta.auto_finished_reason` so admins can tell why the
-    session was auto-closed.
     """
     if session.is_finished:
         return session
 
     session.is_finished = True
-
-    if reason:
-        meta = (
-            db.query(TestSessionMeta)
-            .filter(TestSessionMeta.session_id == session.session_id)
-            .first()
-        )
-        if meta is not None and not meta.auto_finished_reason:
-            meta.auto_finished_reason = reason[:64]
 
     assignment = (
         db.query(PracticeAssignment)
@@ -429,13 +410,14 @@ def get_practice_eligibility(
         .first()
     )
     if existing:
-        # No-resume policy: any pre-existing session means the user has
-        # already used their one attempt for this practice. If we see an
-        # in-progress session here it was abandoned (browser closed before
-        # /abandon could fire) so we finalize it on the spot so the UI
-        # doesn't dangle.
-        if not existing.is_finished:
-            existing = _finish_session(db, existing, reason="abandoned")
+        if existing.is_finished:
+            return {
+                "status": "finished",
+                "can_start": False,
+                "can_resume": False,
+                "session_id": str(existing.session_id),
+                "reason": "You have already completed this test.",
+            }
         if _deadline_exceeded(existing, practice):
             return {
                 "status": "duration_exceeded",
@@ -445,11 +427,11 @@ def get_practice_eligibility(
                 "reason": "Test duration has expired.",
             }
         return {
-            "status": "already_attempted",
+            "status": "in_progress",
             "can_start": False,
-            "can_resume": False,
+            "can_resume": True,
             "session_id": str(existing.session_id),
-            "reason": "You have already attempted this test. Speak to your admin to be re-assigned.",
+            "reason": None,
         }
 
     if assignment.is_completed:
@@ -637,18 +619,12 @@ def start_session(
         .first()
     )
     if existing:
-        # No-resume policy: any prior session — finished or abandoned —
-        # consumes the user's attempt. If we ever find one in flight
-        # here (race with the abandon beacon) close it before bailing
-        # so the UI doesn't render a stale "in progress" state.
-        if not existing.is_finished:
-            _finish_session(db, existing, reason="abandoned")
         raise HTTPException(
             status_code=409,
             detail={
-                "message": "You have already attempted this test. Speak to your admin to be re-assigned.",
+                "message": "A session already exists for this practice. Re-entry is not allowed.",
                 "session_id": str(existing.session_id),
-                "is_finished": True,
+                "is_finished": existing.is_finished,
             },
         )
 
@@ -992,44 +968,6 @@ def list_session_answers(
     session = _session_owned_or_404(db, session_id, current_user.id)
     items = _format_answers(db, session)
     return {"items": items, "total": len(items)}
-
-
-@router.post("/sessions/{session_id}/abandon")
-def abandon_session_endpoint(
-    session_id: uuid.UUID,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    """Mark a session as finished because the student left the test page
-    (tab close, navigate away, lost focus, network drop).
-
-    The student gets graded on whatever they already answered and loses
-    their chance for this practice. Admins can re-issue a new assignment
-    to grant another attempt.
-
-    This endpoint is designed to be called via `navigator.sendBeacon`
-    from the frontend `visibilitychange`/`beforeunload` handlers, so it
-    is intentionally fast: no anti-cheat event row is written, only the
-    session is finalized with reason="abandoned".
-
-    Idempotent — a second call on the same session is a no-op.
-    """
-    session = _session_owned_or_404(db, session_id, current_user.id)
-    already = session.is_finished
-    finished = _finish_session(db, session, reason="abandoned")
-    return {
-        "event": "test_finished",
-        "session_id": str(finished.session_id),
-        "final_score": round(float(finished.overall_points or 0.0), 2),
-        "is_finished": True,
-        "reason": "abandoned",
-        "already_finished": already,
-        "message": (
-            "Session was already closed."
-            if already
-            else "Session marked abandoned. You can no longer continue this test."
-        ),
-    }
 
 
 @router.post("/sessions/{session_id}/finish")

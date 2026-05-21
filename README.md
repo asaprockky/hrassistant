@@ -603,18 +603,8 @@ while (true) {
 - The correct answer is never sent in `next-question`. It is only returned
   after the answer is submitted (or via the `/answers` / `/result` endpoints
   which are available regardless of finish state).
-- **No-resume policy.** Leaving the test (closing the tab,
-  switching windows, calling `/sessions/{id}/abandon`, or reaching the
-  strike threshold) finalizes the session immediately and the user
-  cannot continue it. Admins can re-assign a new attempt via the
-  existing assignment flow.
-- `POST /testing/sessions/{id}/abandon` is intended as a beacon target
-  for the frontend (fires on `pagehide` / `visibilitychange` /
-  fullscreen-exit). It is idempotent and returns the final score.
-- A browser refresh during an *unfinished* session no longer "resumes"
-  the session — eligibility now returns `already_attempted` once a
-  session has been opened, and the in-progress session is auto-finished
-  on the spot.
+- A browser refresh during the test is safe: refetch
+  `/sessions/{id}` + `/sessions/{id}/next-question` to resume.
 
 ### Anti-Cheat & Adaptive Difficulty
 
@@ -903,61 +893,7 @@ The response returns generated usernames and passwords once, plus invitation del
 
 Tests are invitation-only. The candidate assignment list only returns practices where a `practice_assignments` row exists for the current user. `POST /testing/practices/{id}/sessions` returns `403` if the user has no `PracticeAssignment` for the practice. The result endpoint also returns `403` for non-invited users.
 
-## AI Services (Resume Review + Interview)
-
-The candidate portal calls out to OpenAI for two features. The transport
-lives in `utils/ai.py` (raw HTTP, no SDK dependency). Both features
-**degrade gracefully**: if `OPENAI_API_KEY` is unset they fall back to
-heuristic behavior so the endpoints still respond.
-
-**Environment variables (all read at request time, so a hot-reload
-isn't needed):**
-
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `OPENAI_API_KEY` | (unset) | Required to enable AI. When empty: resume review returns the heuristic review, AI interview returns 503. |
-| `OPENAI_BASE_URL` | `https://api.openai.com/v1` | Override for an Azure / proxy / self-hosted deployment. |
-| `OPENAI_INTERVIEW_MODEL` | `gpt-4o-mini` | Model used for the interview chat. |
-| `OPENAI_RESUME_MODEL` | `gpt-4o-mini` | Model used for resume review. |
-| `OPENAI_TIMEOUT_SECONDS` | `30` | Per-request HTTP timeout. |
-
-The key is **only ever read on the backend**. The frontend never sees
-it.
-
-### AI Interview (`/candidate/portal/ai-interview/*`)
-
-Conversation-style mock interview. The interviewer is a GPT system
-prompt scoped to the student-supplied role; the grader is a separate
-prompt that produces a strict JSON evaluation with strengths,
-improvements, summary, score `0..100`, and a per-skill breakdown.
-
-| Method | Path | Description |
-| --- | --- | --- |
-| GET | `/health` | Reports `configured` and `model`. |
-| GET | `/sessions` | Lists the user's interview sessions. |
-| POST | `/sessions` | Starts a new interview. Body: `{ "role": str, "context": str? }`. Returns the session with the interviewer's opening question already inserted. |
-| GET | `/sessions/{id}` | Returns the session including the full transcript. |
-| POST | `/sessions/{id}/messages` | Sends the candidate's reply and returns the interviewer's next message. |
-| POST | `/sessions/{id}/finish` | Asks the grader to evaluate the transcript and finalizes the session with `final_score` + `final_feedback`. |
-
-The schema is in `database/models.py` (`AIInterviewSession`,
-`AIInterviewMessage`) and the migration is
-`alembic/versions/20260522_add_ai_interview_tables.py`.
-
-### AI Resume Review
-
-`POST /candidate/portal/resume-reviews` now routes through
-`utils/ai.py`:
-
-1. Extract text from the uploaded PDF (`pypdf`).
-2. If `OPENAI_API_KEY` is set, send the text to the resume reviewer
-   prompt and parse strict JSON back.
-3. If the call fails or the key is missing, fall back to the original
-   heuristic reviewer.
-
-`/resume-reviews/latest` returns the most recent review.
-
-## Resume AI Prototype (Gemini, legacy)
+## Resume AI Prototype
 
 `schemas/ai_resume_reviewer.py` and `test.py` use Google Generative AI:
 
