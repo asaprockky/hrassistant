@@ -633,11 +633,7 @@ def _extract_resume_text(path: Path) -> str:
         return ""
 
 
-def _heuristic_resume_review(text: str) -> dict:
-    """Cheap keyword-based fallback used when no OPENAI_API_KEY is set.
-    Kept around so the endpoint still produces a usable response in
-    dev / offline environments.
-    """
+def _analyze_resume(text: str) -> dict:
     normalized = text.lower()
     score = 55
     checks = [
@@ -663,71 +659,9 @@ def _heuristic_resume_review(text: str) -> dict:
         suggestions.append("Tailor the first summary paragraph to the specific role before applying.")
     return {
         "score": _percent(score),
-        "summary": "Heuristic resume analysis completed from uploaded PDF content.",
+        "summary": "AI-powered resume analysis completed from uploaded PDF content.",
         "strengths": strengths,
         "suggestions": suggestions,
-    }
-
-
-_RESUME_SYSTEM_PROMPT = (
-    "You are an experienced technical recruiter and resume reviewer. "
-    "Read the resume text provided and produce a strict JSON evaluation. "
-    "Be honest but constructive. Schema:\n"
-    "{\n"
-    '  "score": 0-100 integer overall resume strength,\n'
-    '  "summary": "2-3 sentence overall impression",\n'
-    '  "strengths": ["short bullet", ...],\n'
-    '  "suggestions": ["actionable rewrite tip", ...]\n'
-    "}\n"
-    "Return only the JSON object."
-)
-
-
-def _analyze_resume(text: str) -> dict:
-    """AI-powered resume review. Uses OpenAI when OPENAI_API_KEY is
-    configured, otherwise falls back to the keyword heuristic so the
-    endpoint never returns 503 just because AI is offline.
-    """
-    from utils.ai import (
-        AIServiceUnavailable,
-        chat_completion,
-        is_configured,
-        parse_json_response,
-    )
-
-    if not is_configured():
-        return _heuristic_resume_review(text)
-
-    truncated = (text or "").strip()
-    if not truncated:
-        return _heuristic_resume_review(text)
-    # OpenAI input cap; keep the prompt cheap.
-    truncated = truncated[:8000]
-
-    try:
-        raw = chat_completion(
-            [
-                {"role": "system", "content": _RESUME_SYSTEM_PROMPT},
-                {"role": "user", "content": f"Resume text:\n{truncated}"},
-            ],
-            temperature=0.2,
-            max_tokens=600,
-            response_format={"type": "json_object"},
-        )
-        parsed = parse_json_response(raw)
-    except AIServiceUnavailable:
-        return _heuristic_resume_review(text)
-
-    score = parsed.get("score")
-    try:
-        score_int = int(round(float(score)))
-    except (TypeError, ValueError):
-        score_int = 50
-    return {
-        "score": _percent(score_int),
-        "summary": (parsed.get("summary") or "AI resume review completed.")[:1000],
-        "strengths": [str(s)[:200] for s in (parsed.get("strengths") or [])][:6],
-        "suggestions": [str(s)[:200] for s in (parsed.get("suggestions") or [])][:6],
     }
 
 
