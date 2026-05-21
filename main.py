@@ -6,6 +6,7 @@ from database.database import SessionLocal
 from database.models import User
 from routers import (
     admin_panel,
+    ai_interview,
     candidate_dashboard,
     candidate_portal,
     email,
@@ -39,6 +40,7 @@ app.include_router(email.router)
 app.include_router(main_page.router)
 app.include_router(candidate_dashboard.router)
 app.include_router(candidate_portal.router)
+app.include_router(ai_interview.router)
 app.include_router(admin_panel.router)
 app.include_router(questions.router)
 app.include_router(tester_main.router)
