@@ -1228,3 +1228,367 @@ def upload_resume_for_review(
     db.commit()
     db.refresh(review)
     return _resume_review_payload(review)
+
+
+# ============================================================
+# Student panel extras: leaderboard, achievements, practice mode.
+#
+# These endpoints are additive and read-only (except practice mode,
+# which is a stateless next-question feed). They serve the student
+# panel's new pages and do not interact with the anti-cheat / adaptive
+# difficulty logic in routers/questions.py.
+# ============================================================
+
+from sqlalchemy import and_, or_
+from datetime import timedelta
+import hashlib
+import random
+
+
+def _leaderboard_average_for(db: Session, user_id: uuid.UUID) -> tuple[float, int, Optional[datetime]]:
+    """Returns (average_score, completed_sessions, last_activity_at) for a user."""
+    sessions = (
+        db.query(TestSession)
+        .filter(TestSession.user_id == user_id, TestSession.is_finished == True)  # noqa: E712
+        .all()
+    )
+    if not sessions:
+        return 0.0, 0, None
+    scores: list[int] = []
+    last: Optional[datetime] = None
+    for s in sessions:
+        # We don't store the canonical "percent" so we derive it from
+        # user_answers: correct / total.
+        rows = (
+            db.query(UserAnswer)
+            .filter(UserAnswer.session_id == s.session_id)
+            .all()
+        )
+        if rows:
+            correct = sum(1 for r in rows if r.is_correct)
+            scores.append(round(100 * correct / len(rows)))
+        if s.started_time and (last is None or s.started_time > last):
+            last = s.started_time
+    average = round(sum(scores) / len(scores), 1) if scores else 0.0
+    return average, len(sessions), last
+
+
+@router.get("/leaderboard")
+def get_leaderboard(
+    scope: str = Query("group", pattern=r"^(group|global)$"),
+    limit: int = Query(25, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Ranks students by average score across their finished sessions.
+
+    Other students are anonymised (initials + group); the current user
+    sees their own row by full name. `scope=group` restricts the board
+    to users sharing the same `group_name`; `scope=global` includes
+    everyone.
+    """
+    query = db.query(User).filter(User.role == "USER")
+    if scope == "group" and current_user.group_name:
+        query = query.filter(User.group_name == current_user.group_name)
+    users = query.all()
+
+    rows: list[dict] = []
+    for user in users:
+        avg, sessions_count, last_activity = _leaderboard_average_for(db, user.id)
+        if sessions_count == 0:
+            continue
+        is_self = user.id == current_user.id
+        display = (
+            _full_name(user)
+            if is_self
+            else (f"{(user.name or '')[:1]}{(user.surname or '')[:1]}".upper() or "ST")
+        )
+        rows.append({
+            "user_id": str(user.id) if is_self else None,
+            "display_name": display,
+            "is_self": is_self,
+            "group_name": user.group_name,
+            "average_score": avg,
+            "completed_sessions": sessions_count,
+            "last_activity_at": last_activity,
+        })
+
+    rows.sort(key=lambda r: (-r["average_score"], -r["completed_sessions"]))
+    you_rank: Optional[int] = None
+    for index, row in enumerate(rows, start=1):
+        row["rank"] = index
+        if row["is_self"]:
+            you_rank = index
+
+    return {
+        "scope": scope,
+        "group_name": current_user.group_name if scope == "group" else None,
+        "items": rows[:limit],
+        "you_rank": you_rank,
+        "total_ranked": len(rows),
+    }
+
+
+def _badge(
+    badge_id: str,
+    title: str,
+    description: str,
+    tier: str,
+    progress: int,
+    target: int,
+) -> dict:
+    return {
+        "id": badge_id,
+        "title": title,
+        "description": description,
+        "tier": tier,
+        "earned": progress >= target,
+        "progress": min(progress, target),
+        "target": target,
+    }
+
+
+@router.get("/achievements")
+def get_achievements(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Derived gamification badges based on the student's sessions,
+    certificates, and activity. All checks are read-only — nothing is
+    stored server-side, so the response is recomputed on each request.
+    """
+    finished_sessions = (
+        db.query(TestSession)
+        .filter(
+            TestSession.user_id == current_user.id,
+            TestSession.is_finished == True,  # noqa: E712
+        )
+        .order_by(TestSession.started_time.desc())
+        .all()
+    )
+
+    # Per-session percent score (correct/total) so we can spot perfect runs.
+    perfect_count = 0
+    high_count = 0
+    score_total = 0
+    for s in finished_sessions:
+        answers = (
+            db.query(UserAnswer)
+            .filter(UserAnswer.session_id == s.session_id)
+            .all()
+        )
+        if not answers:
+            continue
+        correct = sum(1 for r in answers if r.is_correct)
+        percent = round(100 * correct / len(answers))
+        score_total += percent
+        if percent == 100:
+            perfect_count += 1
+        if percent >= 80:
+            high_count += 1
+
+    average_score = (
+        round(score_total / len(finished_sessions), 1) if finished_sessions else 0.0
+    )
+
+    # Crude streak: count distinct calendar days with at least one finished
+    # session in the last 30 days, working backwards from today.
+    today = datetime.utcnow().date()
+    completed_days = {
+        s.started_time.date()
+        for s in finished_sessions
+        if s.started_time and (today - s.started_time.date()).days < 60
+    }
+    streak = 0
+    cursor = today
+    while cursor in completed_days:
+        streak += 1
+        cursor = cursor - timedelta(days=1)
+
+    cert_count = (
+        db.query(CandidateCertificate)
+        .filter(CandidateCertificate.user_id == current_user.id)
+        .count()
+    )
+
+    badges = [
+        _badge(
+            "first_steps",
+            "First Steps",
+            "Complete your first assessment.",
+            "bronze",
+            min(len(finished_sessions), 1),
+            1,
+        ),
+        _badge(
+            "consistent_learner",
+            "Consistent Learner",
+            "Finish 5 assessments.",
+            "silver",
+            min(len(finished_sessions), 5),
+            5,
+        ),
+        _badge(
+            "perfect_score",
+            "Perfect Score",
+            "Score 100% on any assessment.",
+            "gold",
+            min(perfect_count, 1),
+            1,
+        ),
+        _badge(
+            "high_scorer",
+            "High Scorer",
+            "Score 80% or higher on 5 assessments.",
+            "silver",
+            min(high_count, 5),
+            5,
+        ),
+        _badge(
+            "streak_starter",
+            "Streak Starter",
+            "Complete an assessment on 3 consecutive days.",
+            "bronze",
+            min(streak, 3),
+            3,
+        ),
+        _badge(
+            "certified",
+            "Certified",
+            "Earn 3 certificates.",
+            "gold",
+            min(cert_count, 3),
+            3,
+        ),
+    ]
+
+    earned = sum(1 for b in badges if b["earned"])
+    return {
+        "summary": {
+            "completed_assessments": len(finished_sessions),
+            "perfect_scores": perfect_count,
+            "average_score": average_score,
+            "certificates": cert_count,
+            "current_streak_days": streak,
+        },
+        "badges": badges,
+        "earned_count": earned,
+        "total_count": len(badges),
+    }
+
+
+@router.get("/practice/categories")
+def get_practice_categories(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Lists practice question categories available to the student
+    (categories that appear in any practice they're assigned to).
+    """
+    assignments = (
+        db.query(PracticeAssignment)
+        .filter(PracticeAssignment.user_id == current_user.id)
+        .all()
+    )
+    practice_ids = [a.practice_id for a in assignments]
+    if not practice_ids:
+        # Fall back to global categories so the page isn't empty for a
+        # student who hasn't been assigned yet.
+        all_categories = (
+            db.query(Question.category, func.count(Question.id))
+            .filter(Question.category.isnot(None))
+            .group_by(Question.category)
+            .all()
+        )
+        return {"items": [{"category": c, "question_count": n} for c, n in all_categories if c]}
+
+    practices = (
+        db.query(Practice)
+        .filter(Practice.practice_id.in_(practice_ids))
+        .all()
+    )
+    question_ids: set[uuid.UUID] = set()
+    for practice in practices:
+        for qid in practice.question_ids or []:
+            question_ids.add(qid)
+    if not question_ids:
+        return {"items": []}
+
+    rows = (
+        db.query(Question.category, func.count(Question.id))
+        .filter(Question.id.in_(question_ids), Question.category.isnot(None))
+        .group_by(Question.category)
+        .all()
+    )
+    return {"items": [{"category": c, "question_count": n} for c, n in rows if c]}
+
+
+@router.get("/practice/next-question")
+def get_practice_next_question(
+    category: Optional[str] = Query(None, max_length=64),
+    difficulty: Optional[str] = Query(None, pattern=r"^(easy|medium|hard)$"),
+    exclude_ids: Optional[str] = Query(
+        None,
+        description="Comma-separated question UUIDs the client already saw.",
+    ),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Returns a single random practice question (with its correct
+    answer baked in so the client can grade locally). This endpoint is
+    NOT for graded tests — it is the untimed practice lab.
+
+    The student gets a fresh, deterministic shuffle of options per
+    question per session by re-using the seeded shuffle from the
+    questions router; here we just pick a question matching the
+    filters that isn't in `exclude_ids`.
+    """
+    excluded: set[uuid.UUID] = set()
+    if exclude_ids:
+        for raw in exclude_ids.split(","):
+            try:
+                excluded.add(uuid.UUID(raw.strip()))
+            except (TypeError, ValueError):
+                continue
+
+    query = db.query(Question)
+    if category:
+        query = query.filter(Question.category == category)
+    if difficulty:
+        # difficulty_level is a float; map 'easy'/'medium'/'hard' to
+        # rough buckets so the client filter is meaningful.
+        if difficulty == "easy":
+            query = query.filter(Question.difficulty_level <= 0.35)
+        elif difficulty == "medium":
+            query = query.filter(
+                and_(Question.difficulty_level > 0.35, Question.difficulty_level <= 0.7)
+            )
+        else:
+            query = query.filter(Question.difficulty_level > 0.7)
+    if excluded:
+        query = query.filter(~Question.id.in_(excluded))
+
+    candidates = query.all()
+    if not candidates:
+        return {"event": "exhausted", "question": None}
+
+    pick = random.choice(candidates)
+    # Stable per-user option shuffle so a student sees the same order
+    # if they revisit the same question on the same day.
+    seed_input = f"{current_user.id}:{pick.id}:{datetime.utcnow().date().isoformat()}"
+    seed = int(hashlib.sha256(seed_input.encode()).hexdigest()[:16], 16)
+    rng = random.Random(seed)
+    options = list(pick.options or [])
+    rng.shuffle(options)
+
+    return {
+        "event": "practice_question",
+        "question": {
+            "id": str(pick.id),
+            "text": pick.text,
+            "options": options,
+            "category": pick.category,
+            "difficulty_level": pick.difficulty_level,
+            "correct_answer": str(pick.correct_answer),
+        },
+    }
