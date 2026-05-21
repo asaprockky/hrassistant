@@ -1,8 +1,10 @@
+import math
+import random
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 from sqlalchemy import Integer, and_, func
 from sqlalchemy.orm import Session, joinedload
 
@@ -11,12 +13,38 @@ from database.models import (
     Practice,
     PracticeAssignment,
     Question,
+    SessionEvent,
     TestSession,
+    TestSessionMeta,
     UserAnswer,
+    UserSkill,
 )
 from routers.login import get_current_user
-from schemas.user_schema import AnswerCreate
+from schemas.user_schema import (
+    AnswerCreate,
+    SessionEventCreate,
+    SessionStartRequest,
+)
 from utils.ai_logic import calculate_difficulty_score
+
+
+# ==========================================
+# ANTI-CHEAT CONFIG
+# ==========================================
+
+# A `warn` or `critical` event consumes a strike. The first strike returns
+# a warning to the client; the second auto-finishes the session with
+# reason="cheating_detected". Set to 1 if you want zero-tolerance.
+STRIKE_LIMIT = 2
+
+# Answers submitted faster than this are auto-flagged as suspicious_timing.
+SUSPICIOUS_TIMING_SECONDS = 0.5
+
+# Skill estimate update rate. Higher = more responsive but noisier.
+SKILL_K = 0.12
+
+# How sharply the expected score curve responds to skill - difficulty gap.
+SKILL_LOGISTIC_SCALE = 4.0
 
 
 router = APIRouter(prefix="/testing", tags=["Testing"])
@@ -137,6 +165,128 @@ def _session_progress(db: Session, session: TestSession) -> dict:
         "ends_at": ends_at,
         "seconds_remaining": seconds_remaining,
     }
+
+
+# ==========================================
+# ANTI-CHEAT + ADAPTIVE DIFFICULTY HELPERS
+# ==========================================
+
+def _get_or_create_meta(db: Session, session: TestSession) -> TestSessionMeta:
+    """Return the TestSessionMeta sidecar for this session, creating an
+    empty row if missing (legacy sessions don't have one). Caller is
+    responsible for committing."""
+    meta = (
+        db.query(TestSessionMeta)
+        .filter(TestSessionMeta.session_id == session.session_id)
+        .first()
+    )
+    if meta is None:
+        meta = TestSessionMeta(session_id=session.session_id, strikes=0)
+        db.add(meta)
+        db.flush()
+    return meta
+
+
+def _get_user_skill(db: Session, user_id: uuid.UUID) -> float:
+    """Read the user's running skill estimate (0..1), defaulting to 0.5
+    when no row exists yet."""
+    row = (
+        db.query(UserSkill.skill_estimate)
+        .filter(UserSkill.user_id == user_id)
+        .first()
+    )
+    if row is None or row[0] is None:
+        return 0.5
+    return float(row[0])
+
+
+def _update_user_skill(
+    db: Session, user_id: uuid.UUID, question_difficulty: float, is_correct: bool
+) -> float:
+    """Bump the user's skill estimate after an answer. Uses a simple
+    logistic-Elo: expected = sigmoid((skill - difficulty) * scale);
+    delta = K * (actual - expected). Returns the new clamped value."""
+    current = _get_user_skill(db, user_id)
+    difficulty = float(question_difficulty or 0.5)
+    try:
+        expected = 1.0 / (
+            1.0 + math.exp(-SKILL_LOGISTIC_SCALE * (current - difficulty))
+        )
+    except OverflowError:
+        expected = 0.0 if (current - difficulty) < 0 else 1.0
+    actual = 1.0 if is_correct else 0.0
+    new_skill = max(0.0, min(1.0, current + SKILL_K * (actual - expected)))
+
+    row = db.query(UserSkill).filter(UserSkill.user_id == user_id).first()
+    if row is None:
+        row = UserSkill(
+            user_id=user_id, skill_estimate=new_skill, updated_at=datetime.utcnow()
+        )
+        db.add(row)
+    else:
+        row.skill_estimate = new_skill
+        row.updated_at = datetime.utcnow()
+    db.flush()
+    return new_skill
+
+
+def _pick_adaptive_question(
+    db: Session,
+    session: TestSession,
+    practice: Practice,
+    user_skill: float,
+) -> tuple[Optional[Question], list, int]:
+    """Pick the unanswered question whose `difficulty_level` is closest
+    to the user's current skill estimate. Falls back to the locked
+    `TestSessionMeta.question_order` if present, otherwise to
+    `Practice.question_ids`. Tie-breaks by UUID string for stable
+    resume behaviour."""
+    answered_ids = {
+        row[0]
+        for row in db.query(UserAnswer.question_id)
+        .filter(UserAnswer.session_id == session.session_id)
+        .all()
+    }
+    meta = session.meta if hasattr(session, "meta") else None
+    order_source = (
+        list(meta.question_order)
+        if meta is not None and meta.question_order
+        else list(practice.question_ids or [])
+    )
+    remaining_ids = [q for q in order_source if q not in answered_ids]
+    total = len(order_source)
+    answered_count = total - len(remaining_ids)
+
+    if not remaining_ids:
+        return None, [], answered_count
+
+    qs_by_id = {
+        q.id: q
+        for q in db.query(Question).filter(Question.id.in_(remaining_ids)).all()
+    }
+    candidates = [qs_by_id[qid] for qid in remaining_ids if qid in qs_by_id]
+    if not candidates:
+        return None, remaining_ids, answered_count
+
+    candidates.sort(
+        key=lambda q: (abs(float(q.difficulty_level or 0.5) - user_skill), str(q.id))
+    )
+    return candidates[0], remaining_ids, answered_count
+
+
+def _extract_client_metadata(request: Optional[Request]) -> dict:
+    """Best-effort capture of the client's IP and User-Agent. Honours
+    `X-Forwarded-For` when set by a reverse proxy."""
+    if request is None:
+        return {"ip_address": None, "user_agent": None}
+    fwd = request.headers.get("x-forwarded-for") or ""
+    ip = fwd.split(",")[0].strip() if fwd else (
+        request.client.host if request.client else None
+    )
+    ua = request.headers.get("user-agent")
+    if ua and len(ua) > 1024:
+        ua = ua[:1024]
+    return {"ip_address": ip, "user_agent": ua}
 
 
 def _format_answers(db: Session, session: TestSession) -> list:
@@ -427,14 +577,23 @@ def get_assigned_tests(
 )
 def start_session(
     practice_id: uuid.UUID,
+    request: Request,
+    body: Optional[SessionStartRequest] = Body(default=None),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
     """Creates a new TestSession for the current user against a practice.
 
-    Mirrors the old `start_test` WebSocket action: same invitation /
-    completion / re-entry / deadline checks. Returns 409 with the existing
-    session id when a session already exists so clients can resume.
+    Anti-cheat side effects (sidecar `test_session_meta` row):
+      - snapshot+shuffle `Practice.question_ids` so the order is locked
+        to this session, defeats memorising the question pool, and
+        survives a refresh;
+      - capture IP / User-Agent / optional device_fingerprint so an admin
+        can correlate multi-account / shared-session attempts.
+
+    Same invitation / completion / re-entry / deadline checks as before.
+    Returns 409 with the existing session id when a session already
+    exists so clients can resume.
     """
     practice = _practice_or_404(db, practice_id)
 
@@ -482,6 +641,23 @@ def start_session(
         started_time=now,
     )
     db.add(session)
+    db.flush()
+
+    # Anti-cheat sidecar: shuffled question_order locked to this session
+    # + connection fingerprint captured from the request.
+    shuffled = list(practice.question_ids or [])
+    random.shuffle(shuffled)
+    meta_client = _extract_client_metadata(request)
+    device_fp = body.device_fingerprint if (body and body.device_fingerprint) else None
+    meta = TestSessionMeta(
+        session_id=session.session_id,
+        question_order=shuffled,
+        ip_address=meta_client["ip_address"],
+        user_agent=meta_client["user_agent"],
+        device_fingerprint=device_fp,
+        strikes=0,
+    )
+    db.add(meta)
     db.commit()
     db.refresh(session)
 
@@ -548,9 +724,16 @@ def get_next_question(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    """Returns the next unanswered question for the session, in
-    `Practice.question_ids` order. Auto-finishes the session when all
-    questions are answered or the timer has expired.
+    """Returns the next unanswered question for the session.
+
+    Selection is adaptive: the question whose `difficulty_level` is
+    closest to the user's running `UserSkill.skill_estimate` is served
+    next. Order is drawn from the session's locked, shuffled
+    `TestSessionMeta.question_order` (falls back to `Practice.question_ids`
+    for legacy sessions created before the sidecar existed).
+
+    Auto-finishes the session when all questions are answered or the
+    timer has expired.
 
     Response is one of:
       - `{event: "question_data", ...}` — render the question
@@ -571,17 +754,12 @@ def get_next_question(
             "reason": "duration_exceeded",
         }
 
-    answered_ids = {
-        row[0]
-        for row in db.query(UserAnswer.question_id)
-        .filter(UserAnswer.session_id == session.session_id)
-        .all()
-    }
-    remaining_ids = [
-        q for q in (practice.question_ids or []) if q not in answered_ids
-    ]
+    user_skill = _get_user_skill(db, current_user.id)
+    next_q, remaining_ids, answered_count = _pick_adaptive_question(
+        db, session, practice, user_skill
+    )
 
-    if not remaining_ids:
+    if next_q is None:
         finished = _finish_session(db, session)
         return {
             "event": "test_finished",
@@ -590,28 +768,7 @@ def get_next_question(
             "reason": "all_answered",
         }
 
-    qs_by_id = {
-        q.id: q
-        for q in db.query(Question).filter(Question.id.in_(remaining_ids)).all()
-    }
-    next_q = None
-    for q_id in remaining_ids:
-        candidate = qs_by_id.get(q_id)
-        if candidate:
-            next_q = candidate
-            break
-
-    if not next_q:
-        finished = _finish_session(db, session)
-        return {
-            "event": "test_finished",
-            "session_id": str(finished.session_id),
-            "final_score": round(float(finished.overall_points or 0.0), 2),
-            "reason": "all_answered",
-        }
-
-    total = len(practice.question_ids) if practice.question_ids else 0
-    answered_count = total - len(remaining_ids)
+    total = answered_count + len(remaining_ids)
 
     return {
         "event": "question_data",
@@ -626,6 +783,9 @@ def get_next_question(
             "total_questions": total,
             "remaining_count": len(remaining_ids),
         },
+        # Surfaced so the frontend can show a "your level" indicator if it
+        # wants; not load-bearing for the test itself.
+        "skill_estimate": round(user_skill, 3),
     }
 
 
@@ -638,7 +798,15 @@ def submit_answer(
 ):
     """Submit an answer for a question that belongs to the session's practice.
 
-    Same business rules as the old `submit_answer` WS action:
+    Side effects beyond the legacy `submit_answer`:
+      - per-user `UserSkill.skill_estimate` is updated (logistic-Elo) so
+        the next `get_next_question` picks a harder/easier question;
+      - an answer submitted faster than `SUSPICIOUS_TIMING_SECONDS` is
+        auto-logged as a `suspicious_timing` SessionEvent with
+        `severity="warn"`. It counts toward the strike limit just like a
+        client-reported violation.
+
+    Same business rules as the old WS action:
       - reject if the session is already finished;
       - reject if the timer has expired (and auto-finish);
       - reject if the question isn't part of the practice;
@@ -646,7 +814,8 @@ def submit_answer(
       - score = (question.points / sum(practice question points)) * 100;
       - recalculate the question's difficulty via `calculate_difficulty_score`.
 
-    Auto-finishes the session when this answer is the last one.
+    Auto-finishes the session when this answer is the last one, or when
+    the strike limit is reached.
     """
     session = _session_owned_or_404(db, session_id, current_user.id)
     if session.is_finished:
@@ -712,6 +881,38 @@ def submit_answer(
         t_factor = float(stats.avg_time or 0)
         question.difficulty_level = calculate_difficulty_score(f_rate, t_factor)
 
+    # Bump the user's running skill estimate so the next question
+    # selection adapts.
+    new_skill = _update_user_skill(
+        db, current_user.id, question.difficulty_level, is_correct
+    )
+
+    # Suspicious-timing heuristic: any answer that comes in under
+    # ~500ms is logged + counted as a warn-severity strike.
+    suspicious = (
+        payload.time_spent is not None
+        and payload.time_spent < SUSPICIOUS_TIMING_SECONDS
+    )
+    auto_finish_for_cheating = False
+    if suspicious:
+        meta = _get_or_create_meta(db, session)
+        db.add(
+            SessionEvent(
+                session_id=session.session_id,
+                event_type="suspicious_timing",
+                severity="warn",
+                payload={
+                    "time_spent": payload.time_spent,
+                    "question_id": str(question.id),
+                    "threshold": SUSPICIOUS_TIMING_SECONDS,
+                },
+            )
+        )
+        meta.strikes = int(meta.strikes or 0) + 1
+        if meta.strikes >= STRIKE_LIMIT:
+            meta.auto_finished_reason = "cheating_detected"
+            auto_finish_for_cheating = True
+
     db.commit()
     db.refresh(session)
 
@@ -726,10 +927,17 @@ def submit_answer(
     )
     is_finished_flag = False
     final_score: Optional[float] = None
-    if total_questions and answered_count >= total_questions:
+    finish_reason: Optional[str] = None
+    if auto_finish_for_cheating:
         finished = _finish_session(db, session)
         is_finished_flag = True
         final_score = round(float(finished.overall_points or 0.0), 2)
+        finish_reason = "cheating_detected"
+    elif total_questions and answered_count >= total_questions:
+        finished = _finish_session(db, session)
+        is_finished_flag = True
+        final_score = round(float(finished.overall_points or 0.0), 2)
+        finish_reason = "all_answered"
 
     return {
         "event": "answer_result",
@@ -741,6 +949,9 @@ def submit_answer(
         "total_questions": total_questions,
         "is_finished": is_finished_flag,
         "final_score": final_score,
+        "finish_reason": finish_reason,
+        "skill_estimate": round(new_skill, 3),
+        "suspicious_timing": bool(suspicious),
     }
 
 
@@ -805,3 +1016,140 @@ def get_session_result(
     progress = _session_progress(db, session)
     items = _format_answers(db, session)
     return {**progress, "answers": items}
+
+
+# ==========================================
+# 3. ANTI-CHEAT EVENT INGESTION + REVIEW
+# ==========================================
+
+@router.post("/sessions/{session_id}/events", status_code=status.HTTP_201_CREATED)
+def report_session_event(
+    session_id: uuid.UUID,
+    payload: SessionEventCreate,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Ingests an anti-cheat event from the test page (tab_blur,
+    paste_attempt, devtools_open, fullscreen_exit, copy_attempt,
+    right_click, screenshot_attempt, ...).
+
+    Strike policy (configurable via `STRIKE_LIMIT`):
+      - `severity=info`     — logged, no strike
+      - `severity=warn` / `critical`
+          * 1st strike → response includes `warning=true, strikes=1`
+          * 2nd strike → response includes `finished=true, reason="cheating_detected"`,
+            and the session is auto-finalized with `assignment.is_completed=True`.
+
+    Returns 409 if the session is already finished — clients should stop
+    sending events at that point.
+    """
+    session = _session_owned_or_404(db, session_id, current_user.id)
+    if session.is_finished:
+        raise HTTPException(status_code=409, detail="Session is already finished.")
+
+    practice = session.practice or _practice_or_404(db, session.practice_id)
+    # If the timer already ran out, auto-finish before recording so the
+    # client can stop polling. Don't record the event after expiry.
+    if _deadline_exceeded(session, practice):
+        finished = _finish_session(db, session)
+        return {
+            "event": "test_finished",
+            "session_id": str(finished.session_id),
+            "final_score": round(float(finished.overall_points or 0.0), 2),
+            "reason": "duration_exceeded",
+            "warning": False,
+            "strikes": None,
+            "finished": True,
+        }
+
+    meta = _get_or_create_meta(db, session)
+    event_row = SessionEvent(
+        session_id=session.session_id,
+        event_type=payload.event_type[:64],
+        severity=payload.severity,
+        payload=payload.payload,
+    )
+    db.add(event_row)
+
+    counts_as_strike = payload.severity in ("warn", "critical")
+    if counts_as_strike:
+        meta.strikes = int(meta.strikes or 0) + 1
+
+    auto_finish = counts_as_strike and meta.strikes >= STRIKE_LIMIT
+    if auto_finish:
+        meta.auto_finished_reason = "cheating_detected"
+
+    db.commit()
+    db.refresh(event_row)
+
+    response = {
+        "event": "event_recorded",
+        "session_id": str(session.session_id),
+        "event_id": str(event_row.id),
+        "event_type": event_row.event_type,
+        "severity": event_row.severity,
+        "strikes": int(meta.strikes or 0),
+        "strike_limit": STRIKE_LIMIT,
+        "counts_as_strike": counts_as_strike,
+        "warning": counts_as_strike and not auto_finish,
+        "finished": False,
+        "reason": None,
+    }
+    if auto_finish:
+        finished = _finish_session(db, session)
+        response.update(
+            finished=True,
+            reason="cheating_detected",
+            final_score=round(float(finished.overall_points or 0.0), 2),
+            message=(
+                "Strike limit reached. The session has been auto-submitted "
+                "and the assignment marked completed."
+            ),
+        )
+    elif counts_as_strike:
+        response["message"] = (
+            f"Warning: this counts as strike {meta.strikes} of {STRIKE_LIMIT}. "
+            "One more violation will auto-submit your test."
+        )
+    return response
+
+
+@router.get("/sessions/{session_id}/events")
+def list_session_events(
+    session_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Returns this session's anti-cheat event log (visible to the
+    session owner; admins read via `/admin/test-sessions/{id}/events`).
+    """
+    session = _session_owned_or_404(db, session_id, current_user.id)
+    rows = (
+        db.query(SessionEvent)
+        .filter(SessionEvent.session_id == session.session_id)
+        .order_by(SessionEvent.created_at.asc())
+        .all()
+    )
+    meta = (
+        db.query(TestSessionMeta)
+        .filter(TestSessionMeta.session_id == session.session_id)
+        .first()
+    )
+    items = [
+        {
+            "id": str(r.id),
+            "event_type": r.event_type,
+            "severity": r.severity,
+            "payload": r.payload,
+            "created_at": r.created_at,
+        }
+        for r in rows
+    ]
+    return {
+        "session_id": str(session.session_id),
+        "items": items,
+        "total": len(items),
+        "strikes": int(meta.strikes) if meta and meta.strikes is not None else 0,
+        "strike_limit": STRIKE_LIMIT,
+        "auto_finished_reason": meta.auto_finished_reason if meta else None,
+    }

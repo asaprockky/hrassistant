@@ -606,6 +606,90 @@ while (true) {
 - A browser refresh during the test is safe: refetch
   `/sessions/{id}` + `/sessions/{id}/next-question` to resume.
 
+### Anti-Cheat & Adaptive Difficulty
+
+The testing flow has two cheat-resistance layers and a per-student
+adaptive difficulty layer. Schema for all three lives in
+`db/anticheat_schema.sql` — **run that script on the database before
+deploying this code**, otherwise the new endpoints 500. The migration
+uses sidecar tables (`user_skills`, `test_session_meta`,
+`session_events`) so existing endpoints keep working before the script
+is run.
+
+**1. Per-session question shuffle (server-side, no client opt-out).**
+`POST /testing/practices/{id}/sessions` snapshots and shuffles
+`Practice.question_ids` into `TestSessionMeta.question_order`. Every
+subsequent `/next-question` walks that shuffled list. Refreshing the
+tab gets you back where you were — no replay of the easier questions,
+no memorizing a static question order across attempts.
+
+**2. Per-student adaptive difficulty.** Each user has a running
+`UserSkill.skill_estimate` in `[0, 1]`, defaulting to `0.5`.
+`/next-question` picks the unanswered question whose `difficulty_level`
+is *closest* to the user's skill. `/answers` updates the skill with a
+logistic-Elo step:
+
+```text
+expected = sigmoid((skill - difficulty) * 4)
+skill   := clamp(skill + 0.12 * (actual - expected), 0, 1)
+```
+
+`/next-question` and `/answers` both return `skill_estimate` so the
+frontend can show a "your level" indicator if it wants.
+
+**3. Anti-cheat event ingestion.** The test page reports violation
+events to `POST /testing/sessions/{id}/events`:
+
+```json
+POST /testing/sessions/{session_id}/events
+{
+  "event_type": "tab_blur",       // free-form, max 64 chars
+  "severity":   "warn",            // "info" | "warn" | "critical"
+  "payload":    { "tab_hidden_ms": 4200 }
+}
+```
+
+Strike policy (configurable via `STRIKE_LIMIT` in
+`routers/questions.py`, default `2`):
+
+- `severity=info` — logged, no strike. Use for low-signal events
+  (brief `tab_blur`, `right_click`).
+- `severity=warn` / `critical` — counts as a strike. **First strike**
+  returns `{warning: true, strikes: 1, message: "...one more violation
+  will auto-submit..."}`. **Second strike** returns
+  `{finished: true, reason: "cheating_detected", final_score: ...}`
+  and the session is auto-finalized + the assignment marked completed.
+
+Suspicious-timing is detected server-side: any `/answers` call with
+`time_spent < 0.5s` automatically logs a `suspicious_timing` event
+with `severity="warn"` (no client cooperation required), so the same
+strike policy applies.
+
+Session start also captures the client IP (honouring
+`X-Forwarded-For`), User-Agent, and an optional
+`device_fingerprint` in the `POST /sessions` body so admins can later
+correlate multi-account / shared-session attempts:
+
+```json
+POST /testing/practices/{practice_id}/sessions
+{ "device_fingerprint": "fp_a1b2c3..." }   // body is optional
+```
+
+Read endpoints:
+
+- `GET /testing/sessions/{id}/events` — owner sees own event log +
+  current strike count + auto-finish reason.
+- `GET /admin/test-sessions/{id}/events` — admin sees the same plus
+  the connection fingerprint (`ip_address`, `user_agent`,
+  `device_fingerprint`).
+
+What this does *not* fix — these need proctoring or a lockdown
+browser, not server-side checks: a second device next to the user
+looking up answers, a person in the room helping, audio cheating
+(earbuds / voice assistant), screen-sharing to a friend, remote
+desktop, OCR on a phone camera, photographing the screen to solve
+later.
+
 ## REST API
 
 ### Health
@@ -669,6 +753,8 @@ Resume upload currently extracts text only. It does not create a `Candidate` row
 | `GET` | `/testing/sessions/{session_id}/answers` | User | List every answer in the session with correctness info. |
 | `POST` | `/testing/sessions/{session_id}/finish` | User | Idempotent manual finalize. |
 | `GET` | `/testing/sessions/{session_id}/result` | User | Progress snapshot + full per-question result. |
+| `POST` | `/testing/sessions/{session_id}/events` | User | Report a cheating-vector violation; consumes strike, may auto-finish. |
+| `GET` | `/testing/sessions/{session_id}/events` | User | Own anti-cheat event log + current strike count. |
 | `GET` | `/testing/practices/{practice_id}/result` | User | Latest score and finish state for a practice by id (legacy shortcut). |
 | `GET` | `/testing/assignments/{filter_option}` | User | Lists available assignments. `filter_option` can be `latest`, `all`, or a numeric limit. |
 | `GET` | `/testing/sessions/active?page=1&size=10` | User | Paginated active test sessions. |
@@ -719,6 +805,7 @@ All admin routes require a user whose role is `ADMIN` or `SUPERADMIN`. Normal ad
 | `GET` | `/admin/test-sessions` | Lists test sessions with filters. |
 | `GET` | `/admin/test-sessions/{session_id}` | Reads one test session. |
 | `GET` | `/admin/test-sessions/{session_id}/answers` | Lists submitted answers in a session. |
+| `GET` | `/admin/test-sessions/{session_id}/events` | Anti-cheat event log + IP/UA/device fingerprint captured at session start. |
 
 #### Creating A Question
 

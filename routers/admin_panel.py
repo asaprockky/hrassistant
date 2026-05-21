@@ -20,7 +20,9 @@ from database.models import (
     Question,
     QuestionHistory,
     Role,
+    SessionEvent,
     TestSession,
+    TestSessionMeta,
     User,
     UserAnswer,
 )
@@ -2722,6 +2724,60 @@ def list_test_session_answers(
         items=[serialize_user_answer(a, questions.get(a.question_id)) for a in answers],
         total=len(answers),
     )
+
+
+@router.get("/test-sessions/{session_id}/events")
+def list_test_session_events(
+    session_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(require_admin),
+):
+    """Anti-cheat event log + connection fingerprint for the session.
+    Admins use this to review violation history (tab_blur, paste_attempt,
+    devtools_open, fullscreen_exit, suspicious_timing, ...) and the IP /
+    User-Agent / device fingerprint captured at session start, so they
+    can correlate multi-account attempts and decide whether to override
+    an auto-finish.
+    """
+    session = _load_test_session_or_404(db, session_id, admin_user)
+    events = (
+        db.query(SessionEvent)
+        .filter(SessionEvent.session_id == session.session_id)
+        .order_by(SessionEvent.created_at.asc())
+        .all()
+    )
+    meta = (
+        db.query(TestSessionMeta)
+        .filter(TestSessionMeta.session_id == session.session_id)
+        .first()
+    )
+    items = [
+        {
+            "id": str(e.id),
+            "event_type": e.event_type,
+            "severity": e.severity,
+            "payload": e.payload,
+            "created_at": e.created_at,
+        }
+        for e in events
+    ]
+    fingerprint = (
+        {
+            "ip_address": meta.ip_address,
+            "user_agent": meta.user_agent,
+            "device_fingerprint": meta.device_fingerprint,
+            "strikes": int(meta.strikes or 0),
+            "auto_finished_reason": meta.auto_finished_reason,
+        }
+        if meta
+        else None
+    )
+    return {
+        "session_id": str(session.session_id),
+        "items": items,
+        "total": len(items),
+        "fingerprint": fingerprint,
+    }
 
 
 # ---------------------------------------------------------------------------

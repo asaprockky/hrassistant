@@ -254,3 +254,94 @@ class UserAnswer(Base):
     is_correct = Column(Boolean)
     points_awarded = Column(Float)
     time_spent = Column(Float, nullable=True)
+
+
+# ============================================================
+# Anti-cheat + per-student adaptive difficulty (sidecar tables).
+#
+# Stored in separate tables instead of ALTERing `users` / `test_session`
+# so that existing endpoints keep working even before the SQL migration
+# in db/anticheat_schema.sql is run on the database. SQLAlchemy
+# relationships are lazy, so these are only queried by the anti-cheat
+# code paths.
+# ============================================================
+
+class UserSkill(Base):
+    """Per-user running skill estimate (0..1). Drives adaptive question
+    selection — the test serves the unanswered question whose
+    `difficulty_level` is closest to this value."""
+    __tablename__ = "user_skills"
+
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    skill_estimate = Column(Float, nullable=False, default=0.5)
+    updated_at = Column(
+        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
+    )
+
+    user = relationship("User", backref="skill")
+
+
+class TestSessionMeta(Base):
+    """Anti-cheat sidecar for a TestSession: the shuffled, locked
+    question order for resume support, the connection fingerprint
+    captured at session start, and the rolling strike counter used by
+    POST /testing/sessions/{id}/events."""
+    __tablename__ = "test_session_meta"
+
+    session_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("test_session.session_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    question_order = Column(ARRAY(UUID(as_uuid=True)), nullable=True)
+    ip_address = Column(String(45), nullable=True)
+    user_agent = Column(Text, nullable=True)
+    device_fingerprint = Column(String(128), nullable=True)
+    strikes = Column(Integer, nullable=False, default=0)
+    auto_finished_reason = Column(String(64), nullable=True)
+
+    session = relationship(
+        "TestSession",
+        back_populates="meta",
+    )
+
+
+# Wire the back-side of TestSession <-> TestSessionMeta after both
+# classes exist so we don't have to ALTER the TestSession class body
+# above (keeps the diff smaller and the back-compat story cleaner).
+TestSession.meta = relationship(
+    "TestSessionMeta",
+    uselist=False,
+    cascade="all, delete-orphan",
+    back_populates="session",
+)
+
+
+class SessionEvent(Base):
+    """Anti-cheat event ingested from the test page (tab_blur,
+    paste_attempt, devtools_open, fullscreen_exit, copy_attempt,
+    right_click, suspicious_timing, ...). Severity drives the strike
+    counter on TestSessionMeta."""
+    __tablename__ = "session_events"
+    __table_args__ = (
+        Index("ix_session_events_session_id", "session_id"),
+        Index("ix_session_events_event_type", "event_type"),
+        Index("ix_session_events_severity", "severity"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    session_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("test_session.session_id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    event_type = Column(String(64), nullable=False)
+    severity = Column(String(16), nullable=False, default="info")
+    payload = Column(JSON, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    session = relationship("TestSession", backref="events")

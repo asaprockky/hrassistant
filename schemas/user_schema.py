@@ -198,6 +198,38 @@ class AnswerCreate(BaseModel):
     user_answer: str  # Stores the Option ID
     time_spent: float
 
+
+class SessionStartRequest(BaseModel):
+    """Optional metadata sent by the test page when starting a session.
+    All fields optional so legacy clients (sending no body) still work."""
+
+    device_fingerprint: Optional[str] = Field(default=None, max_length=128)
+
+
+class SessionEventCreate(BaseModel):
+    """Anti-cheat event reported by the test page.
+
+    `severity` drives the strike counter:
+      - `info`     — logged only (e.g. brief tab_blur)
+      - `warn`     — counts as a strike (paste_attempt, copy_attempt)
+      - `critical` — counts as a strike (devtools_open, fullscreen_exit)
+
+    Policy: first `warn`/`critical` event returns a warning; the second
+    auto-finishes the session with `reason="cheating_detected"`.
+    """
+
+    event_type: str = Field(..., min_length=1, max_length=64)
+    severity: str = Field(default="info", pattern=r"^(info|warn|critical)$")
+    payload: Optional[dict] = None
+
+
+class SessionEventOut(BaseModel):
+    id: uuid.UUID
+    event_type: str
+    severity: str
+    payload: Optional[dict] = None
+    created_at: datetime
+
 class TestStatusResponse(BaseModel):
     message: str
     is_correct: bool
