@@ -7,6 +7,7 @@ from database.models import User
 from routers import (
     admin_panel,
     candidate_dashboard,
+    candidate_portal,
     email,
     login,
     main_page,
@@ -23,6 +24,7 @@ API_TAGS = [
     {"name": "Email Verification"},
     {"name": "Vacancies"},
     {"name": "Candidate Dashboard"},
+    {"name": "Candidate Portal"},
     {"name": "Admin"},
     {"name": "Testing"},
     {"name": "Test Sessions"},
@@ -36,6 +38,7 @@ app.include_router(user_profile.router)
 app.include_router(email.router)
 app.include_router(main_page.router)
 app.include_router(candidate_dashboard.router)
+app.include_router(candidate_portal.router)
 app.include_router(admin_panel.router)
 app.include_router(questions.router)
 app.include_router(tester_main.router)
