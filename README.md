@@ -739,6 +739,38 @@ Resume upload currently extracts text only. It does not create a `Candidate` row
 | `GET` | `/candidate/dashboard/pipeline` | User | Returns total jobs applied, completed tests, and average test score. |
 | `GET` | `/candidate/dashboard/applications/recent?page=1&size=10` | User | Returns paginated recent applications with company, role, status, score, and applied date. |
 
+### Candidate Portal
+
+The candidate portal powers the student-facing single-page app (TalentFlow Student). All routes are mounted under `/candidate/portal` and require a `USER` JWT.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/candidate/portal/me` | Current user + profile completeness for the header card. |
+| `GET` | `/candidate/portal/dashboard` | Dashboard snapshot: greeting, stats, active assessments, recent activity, certificates preview, resume insights. |
+| `GET` | `/candidate/portal/assessments` | Full list of assigned/active/completed assessments. |
+| `GET` | `/candidate/portal/assessments/{practice_id}` | Detail page for one assessment (questions count, last attempt, eligibility). |
+| `GET` | `/candidate/portal/reports/{session_id}` | Result page for a finished session (score, per-question breakdown, integrity summary). |
+| `GET` | `/candidate/portal/analytics` | Full analytics payload (overview + categories + timeline) for the analytics page. |
+| `GET` | `/candidate/portal/analytics/overview` | Lightweight analytics overview for cards. |
+| `GET` | `/candidate/portal/analytics/categories` | Per-category mastery rows. |
+| `GET` | `/candidate/portal/analytics/timeline` | Time-series of average score for charts. |
+| `GET` | `/candidate/portal/notifications` | Notification feed (unread count + items). |
+| `GET` | `/candidate/portal/profile/share` | Public shareable profile slug + payload. |
+| `GET` | `/candidate/portal/ai-profile` | AI-generated headline + career roadmap. |
+| `PATCH` | `/candidate/portal/ai-profile` | Update profile fields (headline, location, university, etc.). |
+| `GET` | `/candidate/portal/certificates` | List certificates (`status_filter=all|earned|pending`). |
+| `GET` | `/candidate/portal/certificates/{certificate_key}` | One certificate's full payload. |
+| `GET` | `/candidate/portal/certificates/{certificate_key}/share` | Public share URL for a certificate. |
+| `GET` | `/candidate/portal/certificates/{certificate_key}/download` | Stream a PDF render of a certificate. |
+| `POST` | `/candidate/portal/certificates` | Attach an external certificate. |
+| `DELETE` | `/candidate/portal/certificates/{certificate_id}` | Remove an external certificate. |
+| `GET` | `/candidate/portal/resume-reviews/latest` | Latest AI resume review. |
+| `POST` | `/candidate/portal/resume-reviews` | Upload a new PDF for review. |
+| `GET` | `/candidate/portal/leaderboard?scope=group\|global` | Ranks students by average score. Other students are anonymized; the current user is named, with a `you_rank` field. |
+| `GET` | `/candidate/portal/achievements` | Six derived badges (first session, 5 sessions, perfect score, 5x 80%+, 3-day streak, 3 certificates) plus a streak summary. |
+| `GET` | `/candidate/portal/practice/categories` | Available practice categories (derived from assigned practices, falls back to all categories). |
+| `GET` | `/candidate/portal/practice/next-question?category=&difficulty=easy\|medium\|hard&exclude_ids=` | Untimed practice question with seeded option shuffle and `correct_answer` for client-side grading. |
+
 ### Testing
 
 | Method | Path | Auth | Purpose |
