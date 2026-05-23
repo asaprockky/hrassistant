@@ -88,6 +88,8 @@ from schemas.user_schema import (
     QuestionOut,
     QuestionRef,
     QuestionUpdate,
+    SimpleAssignmentCreate,
+    SimpleAssignmentOut,
     UserRef,
     VacancyRef,
 )
@@ -2549,6 +2551,74 @@ def manage_advanced_assignments(
                 response.invitation_errors.append(f"{user.username}: {exc}")
 
     return response
+
+
+@router.post(
+    "/assignments",
+    response_model=SimpleAssignmentOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def assign_practice_to_user(
+    payload: SimpleAssignmentCreate,
+    db: Session = Depends(get_db),
+    admin_user: User = Depends(require_admin),
+):
+    """Simple admin endpoint: assign a single practice to a single user.
+
+    Body: ``{"user_id": <uuid>, "practice_id": <uuid>}``.
+
+    Idempotent: re-assigning the same pair returns the existing row
+    with ``already_existed=true`` instead of erroring.
+    """
+    practice = get_practice_or_404(db, payload.practice_id)
+
+    user = db.query(User).filter(User.id == payload.user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # Company-scoped admins can only assign to users in their company.
+    if admin_user.role != Role.SUPERADMIN and admin_user.company_id:
+        if user.company_id != admin_user.company_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You can only assign practices to users in your company.",
+            )
+
+    existing = (
+        db.query(PracticeAssignment)
+        .filter(
+            PracticeAssignment.practice_id == practice.practice_id,
+            PracticeAssignment.user_id == user.id,
+        )
+        .first()
+    )
+    if existing:
+        return SimpleAssignmentOut(
+            assignment_id=existing.assignment_id,
+            user_id=existing.user_id,
+            practice_id=existing.practice_id,
+            assigned_at=existing.assigned_at,
+            already_existed=True,
+        )
+
+    assignment = PracticeAssignment(
+        assignment_id=uuid.uuid4(),
+        practice_id=practice.practice_id,
+        user_id=user.id,
+        assigned_at=datetime.utcnow(),
+        is_completed=False,
+    )
+    db.add(assignment)
+    db.commit()
+    db.refresh(assignment)
+
+    return SimpleAssignmentOut(
+        assignment_id=assignment.assignment_id,
+        user_id=assignment.user_id,
+        practice_id=assignment.practice_id,
+        assigned_at=assignment.assigned_at,
+        already_existed=False,
+    )
 
 
 @router.post("/practices/{practice_id}/invitations", response_model=PracticeInvitationResult)
