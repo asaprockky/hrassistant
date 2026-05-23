@@ -42,6 +42,23 @@ class AdvancedAssignmentUpdate(BaseModel):
     frontend_test_base_url: Optional[str] = None
     invitation_message: Optional[str] = None
 
+
+class SimpleAssignmentCreate(BaseModel):
+    """Single-shot assignment payload: admin gives a user_id + practice_id."""
+
+    user_id: uuid.UUID
+    practice_id: uuid.UUID
+
+
+class SimpleAssignmentOut(BaseModel):
+    """Response for the simple assign endpoint."""
+
+    assignment_id: uuid.UUID
+    user_id: uuid.UUID
+    practice_id: uuid.UUID
+    assigned_at: datetime
+    already_existed: bool
+
         
 class TestSessionItem(BaseModel):
     testId: str
