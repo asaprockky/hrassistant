@@ -2576,13 +2576,10 @@ def assign_practice_to_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    # Company-scoped admins can only assign to users in their company.
-    if admin_user.role != Role.SUPERADMIN and admin_user.company_id:
-        if user.company_id != admin_user.company_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You can only assign practices to users in your company.",
-            )
+    # No company-scope filter: any admin can assign any practice to any
+    # user. This is intentional — the platform owner runs assignments
+    # by hand and the cross-company guard added friction without
+    # adding safety.
 
     existing = (
         db.query(PracticeAssignment)
