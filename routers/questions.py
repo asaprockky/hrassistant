@@ -40,6 +40,28 @@ STRIKE_LIMIT = 2
 # Answers submitted faster than this are auto-flagged as suspicious_timing.
 SUSPICIOUS_TIMING_SECONDS = 0.5
 
+# These events are hard policy failures. They immediately close the
+# session with `reason=cheating_detected` and a zero score.
+IMMEDIATE_ZERO_SCORE_EVENTS = {
+    "multiple_displays_suspected",
+    "fullscreen_exit",
+    "fullscreen_request_denied",
+    "devtools_suspected",
+    "mobile_device_blocked",
+    "tab_hidden",
+    "page_unload_attempt",
+}
+
+MOBILE_UA_MARKERS = (
+    "android",
+    "iphone",
+    "ipod",
+    "ipad",
+    "mobile",
+    "windows phone",
+    "opera mini",
+)
+
 # Skill estimate update rate. Higher = more responsive but noisier.
 SKILL_K = 0.12
 
@@ -106,6 +128,7 @@ def _finish_session(
     session: TestSession,
     *,
     reason: Optional[str] = None,
+    final_score: Optional[float] = None,
 ) -> TestSession:
     """Idempotent finalize: marks the session finished and the matching
     PracticeAssignment completed. Safe to call multiple times.
@@ -117,6 +140,9 @@ def _finish_session(
     """
     if session.is_finished:
         return session
+
+    if final_score is not None:
+        session.overall_points = final_score
 
     session.is_finished = True
 
@@ -306,6 +332,11 @@ def _extract_client_metadata(request: Optional[Request]) -> dict:
     if ua and len(ua) > 1024:
         ua = ua[:1024]
     return {"ip_address": ip, "user_agent": ua}
+
+
+def _is_mobile_user_agent(user_agent: Optional[str]) -> bool:
+    ua = (user_agent or "").lower()
+    return any(marker in ua for marker in MOBILE_UA_MARKERS)
 
 
 def _format_answers(db: Session, session: TestSession) -> list:
@@ -656,6 +687,13 @@ def start_session(
     if practice.deadline and practice.deadline < now:
         raise HTTPException(status_code=409, detail="Practice deadline has passed.")
 
+    meta_client = _extract_client_metadata(request)
+    if _is_mobile_user_agent(meta_client["user_agent"]):
+        raise HTTPException(
+            status_code=403,
+            detail="Tests must be taken from a desktop or laptop browser.",
+        )
+
     session = TestSession(
         session_id=uuid.uuid4(),
         practice_id=practice_id,
@@ -671,7 +709,6 @@ def start_session(
     # + connection fingerprint captured from the request.
     shuffled = list(practice.question_ids or [])
     random.shuffle(shuffled)
-    meta_client = _extract_client_metadata(request)
     device_fp = body.device_fingerprint if (body and body.device_fingerprint) else None
     meta = TestSessionMeta(
         session_id=session.session_id,
@@ -953,7 +990,7 @@ def submit_answer(
     final_score: Optional[float] = None
     finish_reason: Optional[str] = None
     if auto_finish_for_cheating:
-        finished = _finish_session(db, session)
+        finished = _finish_session(db, session, reason="cheating_detected", final_score=0.0)
         is_finished_flag = True
         final_score = round(float(finished.overall_points or 0.0), 2)
         finish_reason = "cheating_detected"
@@ -1133,16 +1170,27 @@ def report_session_event(
     )
     db.add(event_row)
 
-    counts_as_strike = payload.severity in ("warn", "critical")
-    if counts_as_strike:
+    immediate_zero = payload.event_type in IMMEDIATE_ZERO_SCORE_EVENTS
+    counts_as_strike = immediate_zero or payload.severity in ("warn", "critical")
+    if counts_as_strike or immediate_zero:
         meta.strikes = int(meta.strikes or 0) + 1
 
-    auto_finish = counts_as_strike and meta.strikes >= STRIKE_LIMIT
+    auto_finish = immediate_zero or (counts_as_strike and meta.strikes >= STRIKE_LIMIT)
     if auto_finish:
         meta.auto_finished_reason = "cheating_detected"
 
-    db.commit()
-    db.refresh(event_row)
+    if auto_finish:
+        meta.strikes = max(int(meta.strikes or 0), STRIKE_LIMIT)
+        finished = _finish_session(
+            db,
+            session,
+            reason="cheating_detected",
+            final_score=0.0,
+        )
+        db.refresh(event_row)
+    else:
+        db.commit()
+        db.refresh(event_row)
 
     response = {
         "event": "event_recorded",
@@ -1158,14 +1206,13 @@ def report_session_event(
         "reason": None,
     }
     if auto_finish:
-        finished = _finish_session(db, session)
         response.update(
             finished=True,
             reason="cheating_detected",
             final_score=round(float(finished.overall_points or 0.0), 2),
             message=(
-                "Strike limit reached. The session has been auto-submitted "
-                "and the assignment marked completed."
+                "Hard integrity violation detected. The session has been "
+                "closed with a zero score."
             ),
         )
     elif counts_as_strike:

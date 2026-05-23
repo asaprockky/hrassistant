@@ -102,6 +102,7 @@ class CandidateProfile(Base):
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, unique=True, index=True)
+    avatar_url = Column(String(255), nullable=True)
     headline = Column(String(150), nullable=True)
     location = Column(String(100), nullable=True)
     university = Column(String(150), nullable=True)
@@ -113,6 +114,20 @@ class CandidateProfile(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     user = relationship("User", back_populates="candidate_profile")
+
+
+class CandidateNotificationState(Base):
+    __tablename__ = "candidate_notification_state"
+
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    last_read_at = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    user = relationship("User", backref="notification_state")
 
 
 class CandidateCertificate(Base):

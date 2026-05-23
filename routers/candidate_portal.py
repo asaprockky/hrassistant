@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, EmailStr, Field
 from PyPDF2 import PdfReader
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
@@ -16,6 +16,7 @@ from database.database import get_db
 from database.models import (
     Candidate,
     CandidateCertificate,
+    CandidateNotificationState,
     CandidateProfile,
     CandidateResumeReview,
     Created_Vacancy,
@@ -33,10 +34,15 @@ router = APIRouter(prefix="/candidate/portal", tags=["Candidate Portal"])
 
 
 UPLOAD_ROOT = Path("uploads") / "resumes"
+AVATAR_ROOT = Path("uploads") / "avatars"
 MAX_RESUME_BYTES = 5 * 1024 * 1024
+MAX_AVATAR_BYTES = 3 * 1024 * 1024
 
 
 class CandidateProfileUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=30)
+    surname: Optional[str] = Field(None, min_length=1, max_length=30)
+    email: Optional[EmailStr] = None
     headline: Optional[str] = Field(None, max_length=150)
     location: Optional[str] = Field(None, max_length=100)
     university: Optional[str] = Field(None, max_length=150)
@@ -439,12 +445,15 @@ def _profile_payload(db: Session, user: User) -> dict:
             "id": str(user.id),
             "username": user.username,
             "full_name": _full_name(user),
+            "name": user.name,
+            "surname": user.surname,
             "role": "CANDIDATE",
             "headline": headline or "Candidate",
             "location": profile.location,
             "university": profile.university,
             "graduation_year": profile.graduation_year,
             "open_to_work": bool(profile.open_to_work),
+            "avatar_url": profile.avatar_url,
             "avatar_initials": "".join(part[:1] for part in [user.name, user.surname] if part).upper() or "U",
         },
         "contact": {
@@ -735,14 +744,28 @@ def _notifications_from_cards(db: Session, user_id: uuid.UUID, cards: Optional[l
     cards = cards if cards is not None else _load_assessment_cards(db, user_id)
     now = _utcnow()
     items = []
+    state = (
+        db.query(CandidateNotificationState)
+        .filter(CandidateNotificationState.user_id == user_id)
+        .first()
+    )
+    last_read_at = state.last_read_at if state else None
+
+    def enrich(item: dict) -> dict:
+        created_at = item.get("created_at") or now
+        item["id"] = item.get("id") or f"{item['type']}:{item['title']}:{created_at.isoformat() if hasattr(created_at, 'isoformat') else created_at}"
+        item["created_at"] = created_at
+        item["is_read"] = bool(last_read_at and created_at and created_at <= last_read_at)
+        return item
 
     for card in cards:
         if card["status"] not in {"active", "draft"}:
             continue
         deadline = card.get("deadline")
         due_soon = bool(deadline and (deadline - now).days <= 7)
-        items.append(
+        items.append(enrich(
             {
+                "id": f"assessment:{card['assignment_id']}",
                 "type": "assessment",
                 "title": card["title"],
                 "message": "Due soon" if due_soon else card["status_label"],
@@ -751,34 +774,36 @@ def _notifications_from_cards(db: Session, user_id: uuid.UUID, cards: Optional[l
                 "action_label": card["cta_label"],
                 "action_url": card["cta_url"],
             }
-        )
+        ))
 
-    pending_certs = (
-        db.query(func.count(CandidateCertificate.id))
+    pending_certs_row = (
+        db.query(func.count(CandidateCertificate.id), func.min(CandidateCertificate.created_at))
         .filter(
             CandidateCertificate.user_id == user_id,
             CandidateCertificate.status == "pending",
         )
-        .scalar()
-        or 0
+        .first()
     )
+    pending_certs = int(pending_certs_row[0] or 0) if pending_certs_row else 0
     if pending_certs:
-        items.append(
+        items.append(enrich(
             {
+                "id": "certificate:pending",
                 "type": "certificate",
                 "title": "Certificate verification",
                 "message": f"{pending_certs} certificate{'s' if pending_certs != 1 else ''} pending audit.",
                 "priority": "normal",
-                "created_at": now,
+                "created_at": pending_certs_row[1] or now,
                 "action_label": "View Vault",
                 "action_url": "/candidate/portal/certificates",
             }
-        )
+        ))
 
     latest_review = _latest_resume_review(db, user_id)
     if latest_review:
-        items.append(
+        items.append(enrich(
             {
+                "id": f"resume_review:{latest_review.id}",
                 "type": "resume_review",
                 "title": "Resume review ready",
                 "message": f"Latest score: {_percent(latest_review.score)}/100.",
@@ -787,7 +812,7 @@ def _notifications_from_cards(db: Session, user_id: uuid.UUID, cards: Optional[l
                 "action_label": "View Review",
                 "action_url": "/candidate/portal/resume-reviews/latest",
             }
-        )
+        ))
 
     return items[:10]
 
@@ -810,6 +835,7 @@ def get_candidate_me(current_user: User = Depends(get_current_user)):
         "email": current_user.email,
         "role": current_user.role,
         "group_name": current_user.group_name,
+        "avatar_url": current_user.candidate_profile.avatar_url if current_user.candidate_profile else None,
         "student_id": f"#{str(current_user.id)[:6].upper()}",
         "avatar_initials": "".join(part[:1] for part in [current_user.name, current_user.surname] if part).upper() or "U",
     }
@@ -826,6 +852,7 @@ def get_dashboard(
     latest_review = _latest_resume_review(db, current_user.id)
     certs = _certificate_items(db, current_user.id, "all")
     notifications = _notifications_from_cards(db, current_user.id, cards)
+    unread_notifications = len([item for item in notifications if not item.get("is_read")])
 
     return {
         "greeting": {
@@ -837,7 +864,7 @@ def get_dashboard(
             "completed_assessments": len(completed),
             "average_score": _percent(sum(card["score"] or 0 for card in completed) / len(completed)) if completed else 0,
             "certificates": len(certs),
-            "notifications": len(notifications),
+            "notifications": unread_notifications,
         },
         "active_assessments": active[:2],
         "recent_activity": [
@@ -1098,7 +1125,29 @@ def get_notifications(
     current_user: User = Depends(get_current_user),
 ):
     items = _notifications_from_cards(db, current_user.id)
-    return {"items": items, "unread_count": len(items)}
+    return {
+        "items": items,
+        "unread_count": len([item for item in items if not item.get("is_read")]),
+    }
+
+
+@router.post("/notifications/read-all")
+def mark_notifications_read(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    state = (
+        db.query(CandidateNotificationState)
+        .filter(CandidateNotificationState.user_id == current_user.id)
+        .first()
+    )
+    if state is None:
+        state = CandidateNotificationState(user_id=current_user.id)
+        db.add(state)
+    state.last_read_at = _utcnow()
+    state.updated_at = _utcnow()
+    db.commit()
+    return {"ok": True, "unread_count": 0, "last_read_at": state.last_read_at}
 
 
 @router.get("/profile/share")
@@ -1132,7 +1181,42 @@ def update_ai_profile(
 ):
     profile = _ensure_profile(db, current_user)
     for field, value in payload.model_dump(exclude_unset=True).items():
-        setattr(profile, field, value)
+        if field in {"name", "surname", "email"}:
+            setattr(current_user, field, value)
+        else:
+            setattr(profile, field, value)
+    profile.updated_at = _utcnow()
+    db.commit()
+    return _profile_payload(db, current_user)
+
+
+@router.post("/profile/avatar")
+def upload_profile_avatar(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    content_type = (file.content_type or "").lower()
+    if content_type not in {"image/png", "image/jpeg", "image/webp"}:
+        raise HTTPException(status_code=400, detail="Only PNG, JPG, or WEBP images are supported")
+
+    content = file.file.read()
+    if len(content) > MAX_AVATAR_BYTES:
+        raise HTTPException(status_code=413, detail="Profile image exceeds 3MB")
+
+    ext = {
+        "image/png": ".png",
+        "image/jpeg": ".jpg",
+        "image/webp": ".webp",
+    }[content_type]
+    user_dir = AVATAR_ROOT / str(current_user.id)
+    user_dir.mkdir(parents=True, exist_ok=True)
+    stored_name = f"{uuid.uuid4()}{ext}"
+    path = user_dir / stored_name
+    path.write_bytes(content)
+
+    profile = _ensure_profile(db, current_user)
+    profile.avatar_url = f"/uploads/avatars/{current_user.id}/{stored_name}"
     profile.updated_at = _utcnow()
     db.commit()
     return _profile_payload(db, current_user)

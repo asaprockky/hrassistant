@@ -1,5 +1,8 @@
+from pathlib import Path
+
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI, Depends, Query
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
 from database.database import SessionLocal
@@ -33,6 +36,9 @@ API_TAGS = [
 ]
 
 app = FastAPI(title="HR Assistant API", version="1.0.0", openapi_tags=API_TAGS)
+
+Path("uploads").mkdir(exist_ok=True)
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 app.include_router(login.router)
 app.include_router(user_profile.router)

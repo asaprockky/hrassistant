@@ -152,13 +152,14 @@ def login(
     return {
         "access_token": access_token,
         "user": {
-            "userRole": user.id,
+            "id": str(user.id),
             "name": user.name,
             "surname": user.surname,
             "username": user.username,
-            "userRole": user.role,
+            "userRole": str(user.role.value if hasattr(user.role, "value") else user.role),
             "age": user.age,
-            "email": user.email
+            "email": user.email,
+            "group_name": user.group_name,
         }
     }
 
