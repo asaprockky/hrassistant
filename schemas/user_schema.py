@@ -141,6 +141,21 @@ class UserCreate(BaseModel):
     age: int
     email: Optional[str] = None
 
+class PublicRegister(BaseModel):
+    """Public self sign-up payload (U3).
+
+    Deliberately does NOT include role/company_id — those are forced server
+    side so a client can never self-assign ADMIN/SUPERADMIN. name/surname/age
+    are optional so users can register fast and complete their profile later.
+    """
+    username: str = Field(..., min_length=1, max_length=30)
+    email: EmailStr
+    password: str = Field(..., min_length=4)
+    name: Optional[str] = Field(None, max_length=30)
+    surname: Optional[str] = Field(None, max_length=30)
+    age: Optional[int] = Field(None, ge=0)
+
+
 class EmailUpdate(BaseModel):
     email: str
 
@@ -492,6 +507,7 @@ class AdminVacancyOut(BaseORMModel):
     candidate_count: Optional[int] = 0
     is_available: Optional[bool] = True
     status: Optional[str] = None
+    practice_id: Optional[uuid.UUID] = None
 
 
 class AdminVacancyDetail(AdminVacancyOut):
@@ -506,6 +522,7 @@ class AdminVacancyCreate(BaseModel):
     end_date: date
     company_id: Optional[uuid.UUID] = None
     is_available: bool = True
+    practice_id: Optional[uuid.UUID] = None
 
 class AdminVacancyUpdate(BaseModel):
     job_name: Optional[str] = Field(None, max_length=100, min_length=1)
@@ -515,6 +532,7 @@ class AdminVacancyUpdate(BaseModel):
     end_date: Optional[date] = None
     company_id: Optional[uuid.UUID] = None
     is_available: Optional[bool] = None
+    practice_id: Optional[uuid.UUID] = None
 
 
 class AdminPagedVacancies(BaseModel):
@@ -539,6 +557,10 @@ class AdminCandidateOut(BaseORMModel):
     education: Optional[str] = None
     experience: Optional[str] = None
     skills: Optional[str] = None
+    # Populated only by the status-change endpoint (A3): reports whether the
+    # status-update email was delivered. None on list/read endpoints.
+    email_sent: Optional[bool] = None
+    email_error: Optional[str] = None
 
 
 class AdminCandidateCreate(BaseModel):
