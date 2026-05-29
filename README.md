@@ -603,18 +603,20 @@ while (true) {
 - The correct answer is never sent in `next-question`. It is only returned
   after the answer is submitted (or via the `/answers` / `/result` endpoints
   which are available regardless of finish state).
-- **No-resume policy.** Leaving the test (closing the tab,
-  switching windows, calling `/sessions/{id}/abandon`, or reaching the
-  strike threshold) finalizes the session immediately and the user
-  cannot continue it. Admins can re-assign a new attempt via the
-  existing assignment flow.
+- **One-attempt policy.** Calling `/sessions/{id}/abandon` or hitting
+  the strike threshold finalizes the session immediately. Once a
+  session for a practice is `is_finished=true` the user cannot start a
+  new one — admins can re-assign a fresh attempt via the existing
+  assignment flow.
 - `POST /testing/sessions/{id}/abandon` is intended as a beacon target
   for the frontend (fires on `pagehide` / `visibilitychange` /
   fullscreen-exit). It is idempotent and returns the final score.
-- A browser refresh during an *unfinished* session no longer "resumes"
-  the session — eligibility now returns `already_attempted` once a
-  session has been opened, and the in-progress session is auto-finished
-  on the spot.
+- `GET /testing/practices/{id}/eligibility` is strictly read-only —
+  it never mutates session state. A browser refresh during an active
+  session is allowed: eligibility returns `status="in_progress"` with
+  the existing `session_id` so the test page can pick the session back
+  up. The timer keeps running based on `started_time + duration_minutes`,
+  so a refresh is not a free pause.
 
 ### Anti-Cheat & Adaptive Difficulty
 

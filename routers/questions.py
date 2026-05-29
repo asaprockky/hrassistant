@@ -42,14 +42,16 @@ SUSPICIOUS_TIMING_SECONDS = 0.5
 
 # These events are hard policy failures. They immediately close the
 # session with `reason=cheating_detected` and a zero score.
+#
+# Everything else goes through the normal strike counter (one warning,
+# then close on the second violation — see STRIKE_LIMIT) so a noisy OS
+# notification or stray ESC press doesn't zero a student out without
+# warning. Mobile / multi-display are the only events we never warn on
+# because they describe a setup that is fundamentally incompatible with
+# a proctored test.
 IMMEDIATE_ZERO_SCORE_EVENTS = {
     "multiple_displays_suspected",
-    "fullscreen_exit",
-    "fullscreen_request_denied",
-    "devtools_suspected",
     "mobile_device_blocked",
-    "tab_hidden",
-    "page_unload_attempt",
 }
 
 MOBILE_UA_MARKERS = (
@@ -410,6 +412,11 @@ def get_practice_eligibility(
     completed the practice — so the frontend can render the right CTA without
     making a POST and parsing a 4xx.
 
+    This endpoint is strictly READ-ONLY — calling it must never mutate
+    session state. (Prior to this it auto-finished in-progress sessions
+    on every call, which caused a race with the post-start refetch and
+    closed the session the user had just opened.)
+
     Response `status` values:
       - `not_found`            — practice doesn't exist or is invalidated
       - `not_invited`          — user has no PracticeAssignment for this practice
@@ -418,7 +425,8 @@ def get_practice_eligibility(
       - `deadline_passed`      — practice deadline is in the past
       - `finished`             — a finished TestSession already exists
       - `duration_exceeded`    — an in-progress session's timer has expired;
-                                 calling `start` is still blocked
+                                 the next call to /next-question will
+                                 finalize it
       - `in_progress`          — user has an active session to resume
       - `eligible`             — user can call POST /sessions to start
     """
@@ -460,14 +468,18 @@ def get_practice_eligibility(
         .first()
     )
     if existing:
-        # No-resume policy: any pre-existing session means the user has
-        # already used their one attempt for this practice. If we see an
-        # in-progress session here it was abandoned (browser closed before
-        # /abandon could fire) so we finalize it on the spot so the UI
-        # doesn't dangle.
-        if not existing.is_finished:
-            existing = _finish_session(db, existing, reason="abandoned")
+        if existing.is_finished:
+            return {
+                "status": "finished",
+                "can_start": False,
+                "can_resume": False,
+                "session_id": str(existing.session_id),
+                "reason": "You have already completed this assessment.",
+            }
         if _deadline_exceeded(existing, practice):
+            # Do NOT mutate here — next-question / submit-answer will
+            # finalize the session on the next interaction. Eligibility
+            # is informational only.
             return {
                 "status": "duration_exceeded",
                 "can_start": False,
@@ -475,12 +487,16 @@ def get_practice_eligibility(
                 "session_id": str(existing.session_id),
                 "reason": "Test duration has expired.",
             }
+        # Active session: the user is mid-test (or refreshed during it).
+        # No-resume policy is preserved by `start_session` which still
+        # returns 409 — but the frontend can use `session_id` to pick
+        # the session back up instead of restarting from scratch.
         return {
-            "status": "already_attempted",
+            "status": "in_progress",
             "can_start": False,
-            "can_resume": False,
+            "can_resume": True,
             "session_id": str(existing.session_id),
-            "reason": "You have already attempted this test. Speak to your admin to be re-assigned.",
+            "reason": "You have an active session for this assessment.",
         }
 
     if assignment.is_completed:
