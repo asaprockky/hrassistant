@@ -1150,6 +1150,50 @@ def mark_notifications_read(
     return {"ok": True, "unread_count": 0, "last_read_at": state.last_read_at}
 
 
+@router.get("/profile")
+def get_profile(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Lightweight profile + contact slice consumed by the report page
+    (for the share card LinkedIn link) and the candidate profile UI.
+
+    This is intentionally a subset of the richer `/ai-profile` payload —
+    the share card only needs identity + contact, and fetching the full
+    AI profile (with analytics, roadmap, etc.) for that one panel is
+    wasteful.
+    """
+    profile = _ensure_profile(db, current_user)
+    return {
+        "profile": {
+            "id": str(current_user.id),
+            "username": current_user.username,
+            "full_name": _full_name(current_user),
+            "name": current_user.name,
+            "surname": current_user.surname,
+            "email": current_user.email,
+            "role": current_user.role,
+            "group_name": current_user.group_name,
+            "headline": profile.headline,
+            "location": profile.location,
+            "university": profile.university,
+            "graduation_year": profile.graduation_year,
+            "open_to_work": bool(profile.open_to_work),
+            "avatar_url": profile.avatar_url,
+            "avatar_initials": "".join(
+                part[:1] for part in [current_user.name, current_user.surname] if part
+            ).upper()
+            or "U",
+        },
+        "contact": {
+            "email": current_user.email,
+            "phone": profile.phone,
+            "portfolio_url": profile.portfolio_url,
+            "linkedin_url": profile.linkedin_url,
+        },
+    }
+
+
 @router.get("/profile/share")
 def get_profile_share_payload(
     db: Session = Depends(get_db),
