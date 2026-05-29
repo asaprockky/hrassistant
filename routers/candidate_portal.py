@@ -20,6 +20,8 @@ from database.models import (
     CandidateProfile,
     CandidateResumeReview,
     Created_Vacancy,
+    Company,
+    Notification,
     Practice,
     PracticeAssignment,
     Question,
@@ -851,7 +853,10 @@ def get_dashboard(
     completed = [card for card in cards if card["status"] == "completed"]
     latest_review = _latest_resume_review(db, current_user.id)
     certs = _certificate_items(db, current_user.id, "all")
-    notifications = _notifications_from_cards(db, current_user.id, cards)
+    notifications = _stored_notifications(db, current_user.id) + _notifications_from_cards(
+        db, current_user.id, cards
+    )
+    notifications.sort(key=lambda i: i.get("created_at") or _utcnow(), reverse=True)
     unread_notifications = len([item for item in notifications if not item.get("is_read")])
 
     return {
@@ -1119,12 +1124,42 @@ def get_analytics_timeline(
     return {"items": _analytics_from_sessions(db, current_user.id)["timeline"]}
 
 
+def _stored_notifications(db: Session, user_id: uuid.UUID) -> list[dict]:
+    """Real notification rows (U5), e.g. candidate status changes."""
+    rows = (
+        db.query(Notification)
+        .filter(Notification.user_id == user_id)
+        .order_by(Notification.created_at.desc())
+        .limit(50)
+        .all()
+    )
+    return [
+        {
+            "id": f"notification:{row.id}",
+            "notification_id": str(row.id),
+            "type": row.type,
+            "title": row.title,
+            "message": row.body,
+            "priority": "high" if row.type == "status_change" else "normal",
+            "created_at": row.created_at,
+            "is_read": row.read_at is not None,
+            "action_label": "View",
+            "action_url": "/candidate/applications",
+        }
+        for row in rows
+    ]
+
+
 @router.get("/notifications")
 def get_notifications(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    items = _notifications_from_cards(db, current_user.id)
+    # Real stored rows (status changes etc.) plus the derived cards.
+    stored = _stored_notifications(db, current_user.id)
+    derived = _notifications_from_cards(db, current_user.id)
+    items = stored + derived
+    items.sort(key=lambda i: i.get("created_at") or _utcnow(), reverse=True)
     return {
         "items": items,
         "unread_count": len([item for item in items if not item.get("is_read")]),
@@ -1136,6 +1171,14 @@ def mark_notifications_read(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    now = _utcnow()
+    # Mark stored rows read...
+    db.query(Notification).filter(
+        Notification.user_id == current_user.id,
+        Notification.read_at.is_(None),
+    ).update({Notification.read_at: now}, synchronize_session=False)
+
+    # ...and advance the read-cursor that gates the derived notifications.
     state = (
         db.query(CandidateNotificationState)
         .filter(CandidateNotificationState.user_id == current_user.id)
@@ -1144,8 +1187,8 @@ def mark_notifications_read(
     if state is None:
         state = CandidateNotificationState(user_id=current_user.id)
         db.add(state)
-    state.last_read_at = _utcnow()
-    state.updated_at = _utcnow()
+    state.last_read_at = now
+    state.updated_at = now
     db.commit()
     return {"ok": True, "unread_count": 0, "last_read_at": state.last_read_at}
 
@@ -1264,6 +1307,164 @@ def upload_profile_avatar(
     profile.updated_at = _utcnow()
     db.commit()
     return _profile_payload(db, current_user)
+
+
+@router.delete("/profile/avatar")
+def delete_profile_avatar(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Remove the avatar, reverting to the default initials (U4)."""
+    profile = _ensure_profile(db, current_user)
+    profile.avatar_url = None
+    profile.updated_at = _utcnow()
+    db.commit()
+
+    # Best-effort cleanup of the stored files; never fail the request on IO.
+    user_dir = AVATAR_ROOT / str(current_user.id)
+    try:
+        if user_dir.exists():
+            for child in user_dir.iterdir():
+                child.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+    return _profile_payload(db, current_user)
+
+
+# ============================================================
+# U6 — Browse open vacancies + apply
+# ============================================================
+
+def _vacancy_is_open(vacancy: Created_Vacancy, today: date) -> bool:
+    if vacancy.is_available is False:
+        return False
+    if vacancy.start_date and vacancy.start_date > today:
+        return False
+    if vacancy.end_date and vacancy.end_date < today:
+        return False
+    return True
+
+
+@router.get("/vacancies")
+def browse_vacancies(
+    search: Optional[str] = Query(None),
+    limit: int = Query(50, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Public board of currently-open vacancies the candidate can apply to."""
+    today = _utcnow().date()
+    query = (
+        db.query(Created_Vacancy)
+        .filter(Created_Vacancy.is_available.isnot(False))
+        .filter(Created_Vacancy.start_date <= today)
+        .filter(Created_Vacancy.end_date >= today)
+    )
+    if search:
+        like = f"%{search}%"
+        query = query.filter(
+            func.lower(Created_Vacancy.job_name).like(func.lower(like))
+            | func.lower(Created_Vacancy.tag).like(func.lower(like))
+        )
+
+    total = query.count()
+    vacancies = (
+        query.options(joinedload(Created_Vacancy.company))
+        .order_by(Created_Vacancy.start_date.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    applied_ids = {
+        row[0]
+        for row in db.query(Candidate.vacancy_id)
+        .filter(Candidate.user_id == current_user.id)
+        .all()
+    }
+
+    items = [
+        {
+            "id": str(v.id),
+            "job_name": v.job_name,
+            "job_description": v.job_description,
+            "tag": v.tag,
+            "start_date": v.start_date,
+            "end_date": v.end_date,
+            "company_id": str(v.company_id) if v.company_id else None,
+            "company_name": v.company.name if v.company else None,
+            "has_applied": v.id in applied_ids,
+        }
+        for v in vacancies
+    ]
+    return {"items": items, "total": total, "offset": offset, "limit": limit}
+
+
+@router.post("/vacancies/{vacancy_id}/apply", status_code=status.HTTP_201_CREATED)
+def apply_to_vacancy(
+    vacancy_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Apply to a vacancy (U6).
+
+    Creates a Candidate row at status "Applied" so the applicant shows up in
+    the HR pipeline (A4). A user can apply to many vacancies but only once per
+    vacancy (409 on a duplicate).
+    """
+    today = _utcnow().date()
+    vacancy = (
+        db.query(Created_Vacancy)
+        .options(joinedload(Created_Vacancy.company))
+        .filter(Created_Vacancy.id == vacancy_id)
+        .first()
+    )
+    if not vacancy:
+        raise HTTPException(status_code=404, detail="Vacancy not found")
+    if not _vacancy_is_open(vacancy, today):
+        raise HTTPException(status_code=400, detail="This vacancy is not open for applications")
+
+    # Duplicate guard — one application per vacancy.
+    existing = (
+        db.query(Candidate)
+        .filter(
+            Candidate.user_id == current_user.id,
+            Candidate.vacancy_id == vacancy_id,
+        )
+        .first()
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail="You have already applied to this vacancy")
+
+    profile = _ensure_profile(db, current_user)
+    candidate = Candidate(
+        id=uuid.uuid4(),
+        user_id=current_user.id,
+        vacancy_id=vacancy_id,
+        full_name=_full_name(current_user),
+        status="Applied",
+        resume_loc=getattr(profile, "resume_url", None) or "",
+        ai_score=0.0,
+        created_at=_utcnow(),
+    )
+    db.add(candidate)
+
+    # PM proposal (U3): attach a company-less self-registered user to the
+    # company they apply to, so that company's admins can see them.
+    if current_user.company_id is None and vacancy.company_id is not None:
+        current_user.company_id = vacancy.company_id
+
+    db.commit()
+    db.refresh(candidate)
+    return {
+        "id": str(candidate.id),
+        "vacancy_id": str(vacancy_id),
+        "status": candidate.status,
+        "company_name": vacancy.company.name if vacancy.company else None,
+        "applied_at": candidate.created_at,
+    }
 
 
 @router.get("/certificates")

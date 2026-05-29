@@ -1,16 +1,17 @@
+import os
+
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
-# ✅ Replace with your actual MySQL credentials
-#DATABASE_URL = "sqlite:///./test.db"
-
-## internal url
-# Updated with URL-encoded password
-DATABASE_URL = "postgresql://postgres.wzdcbbbqjaledjfraolq:14042005Fayz.%24@aws-1-ap-southeast-2.pooler.supabase.com:6543/postgres"
-#DATABASE_URL = "postgresql://fulstek1_asap:14042005Fayz.@167.235.222.200/fulstek1_hr"
-## external url
-#DATABASE_URL = "postgresql://asap:pzzPoFUjWFYEfblTYFRW8P46AMC7P6Yr@dpg-d4lfcl3e5dus73foo3i0-a.oregon-postgres.render.com/hrassistant_2k4y"
+# The connection string is read from the DATABASE_URL environment variable so
+# credentials are never committed to the repo. The previously hardcoded
+# production URL has been removed and its password must be rotated (see PR
+# notes / .env.example). Falls back to a local Postgres for development.
+DATABASE_URL = os.getenv(
+    "DATABASE_URL",
+    "postgresql://postgres@127.0.0.1:5432/postgres",
+)
 
 # Create SQLAlchemy engine
 # Pool tuning:

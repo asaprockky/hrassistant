@@ -1,4 +1,5 @@
 import json
+import os
 import random
 import smtplib
 import ssl
@@ -24,11 +25,14 @@ from routers.login import get_current_user
 router = APIRouter(prefix="/users/me/email", tags=["Email Verification"])
 
 # --- CONFIGURATION FOR EMAIL SENDING ---
-PORT = 465 # SSL Port
-SMTP_SERVER = "smtp.gmail.com"
-LOGIN = "shokirovabdulfayz@gmail.com" # <--- YOUR SENDER EMAIL
-PASSWORD = "hqic ybjr ptdz wkgd" # <--- YOUR GMAIL APP PASSWORD
-SENDER_EMAIL = LOGIN 
+# Credentials come from the environment so they are never committed to the
+# repo (the previously hardcoded Gmail app password has been removed and must
+# be rotated). See utils/mailer.py and .env.example.
+PORT = int(os.getenv("SMTP_PORT", "465"))  # SSL Port
+SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
+LOGIN = os.getenv("SMTP_LOGIN", "")
+PASSWORD = os.getenv("SMTP_APP_PASSWORD", "")
+SENDER_EMAIL = os.getenv("SENDER_EMAIL", LOGIN)
 
 # In-Memory Store for Verification Codes (Used temporarily)
 # Structure: {user_id: {"email": str, "code": str, "expiry": datetime}}

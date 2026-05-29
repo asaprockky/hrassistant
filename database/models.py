@@ -46,6 +46,10 @@ class User(Base):
     email = Column(String(100), nullable=True)
     group_name = Column(String(50), nullable=True, index=True)
 
+    # Set true for admin-created/invited/reset accounts so the app forces a
+    # password change on first login (see U2). Cleared after a successful change.
+    must_change_password = Column(Boolean, nullable=False, default=False, server_default="false")
+
     # Relationships
     # FIX: Changed relationship target from StartedTest (old model) to TestSession (new model)
     test_sessions = relationship("TestSession", back_populates="user")
@@ -69,6 +73,16 @@ class Created_Vacancy(Base):
     candidate_count = Column(Integer, default=0)
     is_available = Column(Boolean, default=True)
 
+    # Optional practice/assessment linked to this vacancy. When HR confirms an
+    # applicant, this is the test they are granted access to (see A4). Nullable
+    # so legacy vacancies keep working; Confirm prompts HR to pick one if unset.
+    practice_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("practice.practice_id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    practice = relationship("Practice")
+
     company_id = Column(UUID(as_uuid=True), ForeignKey("companies.id"))
     company = relationship("Company", back_populates="created_vacancies")
 
@@ -81,7 +95,8 @@ class Candidate(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     # --- NEW COLUMNS ---
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    status = Column(String(50), default="Applied") # E.g., "Applied", "Testing", "Interview", "Rejected"
+    # Canonical pipeline (see A4): Applied -> Testing -> Interviewing -> Hired -> Rejected
+    status = Column(String(50), default="Applied")
     # -------------------
     
     full_name = Column(String(100), nullable=False)
@@ -426,3 +441,39 @@ class AIInterviewMessage(Base):
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
 
     session = relationship("AIInterviewSession", back_populates="messages")
+
+
+# ============================================================
+# In-app notifications (see U5).
+#
+# Previously notifications were only *derived* from assessment cards /
+# certificates. This table stores real notification rows (e.g. a candidate
+# status change) so they persist and can be marked read individually. The
+# existing CandidateNotificationState (a read-cursor) still gates the derived
+# notifications; stored rows carry their own `read_at`.
+# ============================================================
+
+class Notification(Base):
+    __tablename__ = "notifications"
+    __table_args__ = (
+        Index("ix_notifications_user_created", "user_id", "created_at"),
+    )
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    # e.g. "status_change". Free-form so new notification kinds don't need a
+    # schema change.
+    type = Column(String(40), nullable=False, default="status_change")
+    title = Column(String(150), nullable=False)
+    body = Column(Text, nullable=True)
+    related_candidate_id = Column(UUID(as_uuid=True), nullable=True)
+    related_vacancy_id = Column(UUID(as_uuid=True), nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+    read_at = Column(DateTime, nullable=True)
+
+    user = relationship("User")
