@@ -94,6 +94,7 @@ from schemas.user_schema import (
     VacancyRef,
 )
 from utils.mailer import EmailDeliveryError, send_email
+from utils.status_notifications import notify_candidate_status_change
 
 
 router = APIRouter(prefix="/admin", tags=["Admin"])
@@ -140,6 +141,29 @@ def generate_unique_username(
         candidate = f"{base[: 30 - len(suffix)]}{suffix}"
         counter += 1
 
+    reserved.add(candidate)
+    return candidate
+
+
+def dedupe_username(
+    base: str,
+    db: Session,
+    reserved: Optional[set[str]] = None,
+) -> str:
+    """Return a unique username derived from an explicitly-supplied `base`.
+
+    Used by bulk/Excel import (cross-cutting requirement): a duplicate
+    explicitly-supplied username is auto-renamed (john.doe -> john.doe1)
+    instead of hard-failing the row.
+    """
+    reserved = reserved or set()
+    base = (base or "").strip()[:30] or "student"
+    candidate = base
+    counter = 1
+    while candidate in reserved or db.query(User.id).filter(User.username == candidate).first():
+        suffix = str(counter)
+        candidate = f"{base[: 30 - len(suffix)]}{suffix}"
+        counter += 1
     reserved.add(candidate)
     return candidate
 
@@ -478,6 +502,7 @@ def serialize_admin_vacancy(
         candidate_count=candidate_count if candidate_count is not None else (vacancy.candidate_count or 0),
         is_available=vacancy.is_available,
         status=_derive_vacancy_status(vacancy, today=today),
+        practice_id=vacancy.practice_id,
     )
 
 
@@ -1000,6 +1025,8 @@ def create_user(
         age=data.age,
         email=str(data.email) if data.email else None,
         group_name=data.group_name,
+        # U2: admin-created accounts must set their own password on first login.
+        must_change_password=True,
     )
 
     db.add(user)
@@ -1056,19 +1083,9 @@ def bulk_create_users(
     failed: list[dict] = []
     email_jobs = []
 
-    # Pre-fetch all potentially conflicting users in two queries (one for
-    # usernames, one for emails) instead of issuing 2 SELECTs per row.
-    requested_usernames = {item.username for item in data.users if item.username}
+    # Pre-fetch existing users by email (the import identity key) in one query
+    # instead of a SELECT per row.
     requested_emails = {str(item.email) for item in data.users if item.email}
-
-    username_map: dict[str, User] = {}
-    if requested_usernames:
-        rows = (
-            db.query(User)
-            .filter(User.username.in_(requested_usernames))
-            .all()
-        )
-        username_map = {u.username: u for u in rows}
 
     email_map: dict[str, User] = {}
     if requested_emails:
@@ -1080,11 +1097,10 @@ def bulk_create_users(
         email_map = {u.email: u for u in rows}
 
     for item in data.users:
-        existing = None
-        if item.username:
-            existing = username_map.get(item.username)
-        if not existing:
-            existing = email_map.get(str(item.email))
+        # "Same person" is keyed on email (the stable identity for imports).
+        # A username collision with a *different* person is auto-renamed below
+        # rather than treated as the same user.
+        existing = email_map.get(str(item.email)) if item.email else None
 
         if existing:
             if not data.skip_existing:
@@ -1104,17 +1120,17 @@ def bulk_create_users(
                 email_jobs.append((existing, practice, None, result))
             continue
 
-        username = item.username or generate_unique_username(
-            item.name,
-            item.surname,
-            db,
-            reserved=reserved_usernames,
-        )
-        if username in reserved_usernames or db.query(User.id).filter(User.username == username).first():
-            failed.append({"email": str(item.email), "reason": "Username already exists."})
-            continue
-
-        reserved_usernames.add(username)
+        # Cross-cutting: an explicitly-supplied duplicate username is
+        # auto-renamed (john.doe -> john.doe1) instead of failing the row.
+        if item.username:
+            username = dedupe_username(item.username, db, reserved=reserved_usernames)
+        else:
+            username = generate_unique_username(
+                item.name,
+                item.surname,
+                db,
+                reserved=reserved_usernames,
+            )
         raw_password = generate_random_password()
         user = User(
             id=uuid.uuid4(),
@@ -1127,6 +1143,8 @@ def bulk_create_users(
             age=item.age,
             email=str(item.email),
             group_name=item.group_name or data.group_name,
+            # U2: bulk-imported accounts must set their own password on first login.
+            must_change_password=True,
         )
         db.add(user)
         db.flush()
@@ -1324,6 +1342,8 @@ def reset_user_password(
 
     new_password = data.new_password or generate_random_password()
     user.password = hash_password(new_password)
+    # U2: an admin reset forces the user to choose a new password on next login.
+    user.must_change_password = True
     db.commit()
 
     result = AdminUserPasswordResetResult(
@@ -1664,6 +1684,9 @@ def create_vacancy(
     if data.end_date < data.start_date:
         raise HTTPException(status_code=400, detail="end_date cannot be before start_date.")
 
+    if data.practice_id is not None:
+        get_practice_or_404(db, data.practice_id)
+
     vacancy = Created_Vacancy(
         id=uuid.uuid4(),
         job_name=data.job_name,
@@ -1673,6 +1696,7 @@ def create_vacancy(
         end_date=data.end_date,
         company_id=company_id,
         is_available=data.is_available,
+        practice_id=data.practice_id,
     )
     db.add(vacancy)
     db.commit()
@@ -1728,6 +1752,8 @@ def update_vacancy(
     update_data = data.model_dump(exclude_unset=True, exclude_none=True)
     if "company_id" in update_data:
         update_data["company_id"] = resolve_company_id(update_data["company_id"], admin_user)
+    if update_data.get("practice_id") is not None:
+        get_practice_or_404(db, update_data["practice_id"])
 
     start_date = update_data.get("start_date", vacancy.start_date)
     end_date = update_data.get("end_date", vacancy.end_date)
@@ -1971,13 +1997,34 @@ def update_candidate_status(
     if not candidate:
         raise HTTPException(status_code=404, detail="Candidate not found")
 
+    previous_status = candidate.status
     candidate.status = update_data.status
+
+    # A3 + U5: fan out to email + in-app notification, but only when the
+    # status actually changed. Email failures never block the update.
+    notify_result = None
+    if previous_status != update_data.status:
+        db.refresh(candidate, ["user", "vacancy"])
+        vacancy_name = candidate.vacancy.job_name if candidate.vacancy else None
+        notify_result = notify_candidate_status_change(
+            db,
+            candidate,
+            update_data.status,
+            user=candidate.user,
+            vacancy_name=vacancy_name,
+        )
+
     db.commit()
     db.refresh(candidate)
     db.refresh(candidate, ["user", "vacancy"])
     if candidate.vacancy is not None:
         db.refresh(candidate.vacancy, ["company"])
-    return serialize_admin_candidate(candidate)
+
+    payload = serialize_admin_candidate(candidate)
+    if notify_result is not None:
+        payload.email_sent = notify_result.email_sent
+        payload.email_error = notify_result.email_error
+    return payload
 
 
 @router.delete("/candidates/{candidate_id}", response_model=AdminDeleteResult)
