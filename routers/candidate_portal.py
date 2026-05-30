@@ -1144,7 +1144,9 @@ def _stored_notifications(db: Session, user_id: uuid.UUID) -> list[dict]:
             "created_at": row.created_at,
             "is_read": row.read_at is not None,
             "action_label": "View",
-            "action_url": "/candidate/applications",
+            "action_url": "/applications",
+            "related_vacancy_id": str(row.related_vacancy_id) if row.related_vacancy_id else None,
+            "related_candidate_id": str(row.related_candidate_id) if row.related_candidate_id else None,
         }
         for row in rows
     ]
@@ -1464,6 +1466,207 @@ def apply_to_vacancy(
         "status": candidate.status,
         "company_name": vacancy.company.name if vacancy.company else None,
         "applied_at": candidate.created_at,
+    }
+
+
+# ============================================================
+# Vacancy details + my-applications (status tracker)
+#
+# These power the candidate-side experience the PM asked for:
+#   - read full vacancy info on the Open Roles page,
+#   - see which tests are tied to a vacancy,
+#   - track my application status across vacancies (the FIFA-style
+#     pipeline view).
+#
+# All routes are read-only; the apply-side mutations live above.
+# ============================================================
+
+# Canonical pipeline used in the FIFA-style stepper on the client.
+# Mirrors the admin pipeline (see A4) — Rejected is a terminal branch
+# that detours off "Interviewing" rather than being a forward step.
+APPLICATION_PIPELINE = ["Applied", "Testing", "Interviewing", "Hired"]
+APPLICATION_TERMINAL = {"Hired", "Rejected"}
+
+
+def _pipeline_stage_index(status_value: Optional[str]) -> int:
+    if not status_value:
+        return 0
+    normalized = status_value.strip()
+    if normalized in APPLICATION_PIPELINE:
+        return APPLICATION_PIPELINE.index(normalized)
+    # Rejected always renders past the "Interviewing" column so the
+    # candidate sees how far they progressed before the decision.
+    if normalized == "Rejected":
+        return APPLICATION_PIPELINE.index("Interviewing")
+    return 0
+
+
+def _vacancy_practice_summary(db: Session, practice: Optional[Practice]) -> Optional[dict]:
+    if practice is None:
+        return None
+    stats = _question_stats(db, practice)
+    tags = practice.tags or []
+    return {
+        "practice_id": str(practice.practice_id),
+        "title": practice.title,
+        "description": practice.description,
+        "duration_minutes": practice.duration_minutes,
+        "deadline": practice.deadline,
+        "question_count": stats["count"],
+        "tags": tags,
+        "difficulty": _difficulty_label(stats["avg_difficulty"], practice.duration_minutes),
+    }
+
+
+def _vacancy_full_payload(
+    db: Session,
+    vacancy: Created_Vacancy,
+    *,
+    candidate: Optional[Candidate],
+    session: Optional[TestSession],
+    today: date,
+) -> dict:
+    """Shape consumed by both /vacancies/{id} and /applications items."""
+    application_block = None
+    if candidate is not None:
+        application_block = {
+            "candidate_id": str(candidate.id),
+            "status": candidate.status,
+            "applied_at": candidate.created_at,
+            "stage_index": _pipeline_stage_index(candidate.status),
+            "stage_total": len(APPLICATION_PIPELINE),
+            "is_terminal": candidate.status in APPLICATION_TERMINAL,
+        }
+
+    return {
+        "id": str(vacancy.id),
+        "job_name": vacancy.job_name,
+        "job_description": vacancy.job_description,
+        "tag": vacancy.tag,
+        "start_date": vacancy.start_date,
+        "end_date": vacancy.end_date,
+        "is_open": _vacancy_is_open(vacancy, today),
+        "candidate_count": vacancy.candidate_count or 0,
+        "company_id": str(vacancy.company_id) if vacancy.company_id else None,
+        "company_name": vacancy.company.name if vacancy.company else None,
+        "practice": _vacancy_practice_summary(db, vacancy.practice),
+        "application": application_block,
+        "session_id": str(session.session_id) if session else None,
+    }
+
+
+@router.get("/vacancies/{vacancy_id}")
+def get_vacancy_detail(
+    vacancy_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Full vacancy detail + linked practice + my application status.
+
+    The candidate-facing job page uses this to render the full
+    description, dates, the test that will be assigned if hired, and
+    a FIFA-style status stepper if the user has already applied.
+    """
+    vacancy = (
+        db.query(Created_Vacancy)
+        .options(
+            joinedload(Created_Vacancy.company),
+            joinedload(Created_Vacancy.practice),
+        )
+        .filter(Created_Vacancy.id == vacancy_id)
+        .first()
+    )
+    if not vacancy:
+        raise HTTPException(status_code=404, detail="Vacancy not found")
+
+    candidate = (
+        db.query(Candidate)
+        .filter(
+            Candidate.user_id == current_user.id,
+            Candidate.vacancy_id == vacancy_id,
+        )
+        .order_by(Candidate.created_at.desc())
+        .first()
+    )
+
+    session = None
+    if vacancy.practice_id is not None:
+        session = (
+            db.query(TestSession)
+            .filter(
+                TestSession.user_id == current_user.id,
+                TestSession.practice_id == vacancy.practice_id,
+            )
+            .order_by(TestSession.started_time.desc())
+            .first()
+        )
+
+    today = _utcnow().date()
+    return _vacancy_full_payload(
+        db, vacancy, candidate=candidate, session=session, today=today
+    )
+
+
+@router.get("/applications")
+def list_my_applications(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Pipeline view: every vacancy I applied to, current status, the
+    linked test (if any), and my latest session against it.
+
+    Powers the FIFA-style status tracker the PM asked for.
+    """
+    candidates = (
+        db.query(Candidate)
+        .options(
+            joinedload(Candidate.vacancy).joinedload(Created_Vacancy.company),
+            joinedload(Candidate.vacancy).joinedload(Created_Vacancy.practice),
+        )
+        .filter(Candidate.user_id == current_user.id)
+        .order_by(Candidate.created_at.desc())
+        .all()
+    )
+
+    # One-shot lookup of every relevant session keyed by practice id.
+    practice_ids = {c.vacancy.practice_id for c in candidates if c.vacancy and c.vacancy.practice_id}
+    sessions_by_practice: dict[uuid.UUID, TestSession] = {}
+    if practice_ids:
+        sessions = (
+            db.query(TestSession)
+            .filter(
+                TestSession.user_id == current_user.id,
+                TestSession.practice_id.in_(practice_ids),
+            )
+            .order_by(TestSession.started_time.desc())
+            .all()
+        )
+        for s in sessions:
+            sessions_by_practice.setdefault(s.practice_id, s)
+
+    today = _utcnow().date()
+    items: list[dict] = []
+    counts = {"total": 0, "in_progress": 0, "completed": 0, "rejected": 0}
+    for candidate in candidates:
+        if candidate.vacancy is None:
+            continue
+        session = sessions_by_practice.get(candidate.vacancy.practice_id) if candidate.vacancy.practice_id else None
+        payload = _vacancy_full_payload(
+            db, candidate.vacancy, candidate=candidate, session=session, today=today
+        )
+        items.append(payload)
+        counts["total"] += 1
+        if candidate.status == "Rejected":
+            counts["rejected"] += 1
+        elif candidate.status == "Hired":
+            counts["completed"] += 1
+        else:
+            counts["in_progress"] += 1
+
+    return {
+        "items": items,
+        "counts": counts,
+        "pipeline": APPLICATION_PIPELINE,
     }
 
 
