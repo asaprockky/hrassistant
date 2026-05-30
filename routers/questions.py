@@ -408,14 +408,20 @@ def get_practice_eligibility(
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    """Returns whether the current user can start, must resume, or has already
-    completed the practice — so the frontend can render the right CTA without
-    making a POST and parsing a 4xx.
+    """Returns whether the current user can start the practice, or
+    whether their single attempt has already been used.
+
+    Strict no-resume policy: a candidate gets exactly one attempt.
+    `in_progress` is NOT a resumable state — it means the candidate
+    started, then left, and the session is still flagged in-progress
+    in the DB only because the abandon beacon didn't reach the server.
+    The client treats `in_progress` exactly like `finished` (no resume,
+    locked) and explicitly finalizes the orphan session via
+    `POST /sessions/{id}/abandon` before showing the report.
 
     This endpoint is strictly READ-ONLY — calling it must never mutate
-    session state. (Prior to this it auto-finished in-progress sessions
-    on every call, which caused a race with the post-start refetch and
-    closed the session the user had just opened.)
+    session state. (Mutation here caused a race with the post-start
+    refetch and closed the session the user had just opened.)
 
     Response `status` values:
       - `not_found`            — practice doesn't exist or is invalidated
@@ -427,8 +433,14 @@ def get_practice_eligibility(
       - `duration_exceeded`    — an in-progress session's timer has expired;
                                  the next call to /next-question will
                                  finalize it
-      - `in_progress`          — user has an active session to resume
+      - `in_progress`          — an attempt was started and left; the
+                                 client must finalize it via /abandon
+                                 (no resume path)
       - `eligible`             — user can call POST /sessions to start
+
+    `can_resume` is ALWAYS false. It is kept on the response shape for
+    backwards compatibility with older clients but no longer signals
+    a real resume path.
     """
     practice = (
         db.query(Practice).filter(Practice.practice_id == practice_id).first()
@@ -487,16 +499,18 @@ def get_practice_eligibility(
                 "session_id": str(existing.session_id),
                 "reason": "Test duration has expired.",
             }
-        # Active session: the user is mid-test (or refreshed during it).
-        # No-resume policy is preserved by `start_session` which still
-        # returns 409 — but the frontend can use `session_id` to pick
-        # the session back up instead of restarting from scratch.
+        # In-progress session that the candidate left without the
+        # abandon beacon completing. Per strict no-resume policy this
+        # is NOT resumable. `can_resume` is False so any older client
+        # that still checks the flag falls through to the locked UI.
+        # New clients explicitly finalize the orphan via /abandon
+        # before redirecting to the report.
         return {
             "status": "in_progress",
             "can_start": False,
-            "can_resume": True,
+            "can_resume": False,
             "session_id": str(existing.session_id),
-            "reason": "You have an active session for this assessment.",
+            "reason": "You have already used your attempt for this assessment.",
         }
 
     if assignment.is_completed:
