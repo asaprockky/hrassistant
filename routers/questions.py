@@ -4,11 +4,11 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Request, status
 from sqlalchemy import Integer, and_, func
 from sqlalchemy.orm import Session, joinedload
 
-from database.database import get_db
+from database.database import SessionLocal, get_db
 from database.models import (
     Practice,
     PracticeAssignment,
@@ -66,6 +66,53 @@ MOBILE_UA_MARKERS = (
 
 # Skill estimate update rate. Higher = more responsive but noisier.
 SKILL_K = 0.12
+
+
+def _recompute_question_difficulty_async(question_id: uuid.UUID) -> None:
+    """Background job: recompute one question's global difficulty from
+    every answer ever submitted for it, then persist the new value.
+
+    Why this is a background job (Ticket 2): the recompute scans the
+    full UserAnswer history for the question, which grows with platform
+    usage. Running it on the candidate's submit path made every answer
+    progressively slower as the platform grew. The candidate's HTTP
+    response is sent first; this runs after, in its own DB session,
+    so it never blocks the next-question render.
+
+    The per-candidate adaptive selection inside the same session is
+    unaffected — it uses `UserSkill.skill_estimate` (updated
+    synchronously in `submit_answer`) and the question's *current*
+    `difficulty_level`, which lags by at most one submit per candidate.
+    """
+    db = SessionLocal()
+    try:
+        stats = (
+            db.query(
+                func.count(UserAnswer.id).label("total"),
+                func.sum(func.cast(UserAnswer.is_correct == False, Integer)).label("failures"),
+                func.avg(UserAnswer.time_spent).label("avg_time"),
+            )
+            .filter(UserAnswer.question_id == question_id)
+            .first()
+        )
+        if not stats or not stats.total or stats.total <= 0:
+            return
+        f_rate = (stats.failures or 0) / stats.total
+        t_factor = float(stats.avg_time or 0)
+        new_difficulty = calculate_difficulty_score(f_rate, t_factor)
+        q = (
+            db.query(Question)
+            .filter(Question.id == question_id)
+            .first()
+        )
+        if q is None:
+            return
+        q.difficulty_level = new_difficulty
+        db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
 
 # How sharply the expected score curve responds to skill - difficulty gap.
 SKILL_LOGISTIC_SCALE = 4.0
@@ -884,6 +931,7 @@ def get_next_question(
 def submit_answer(
     session_id: uuid.UUID,
     payload: AnswerCreate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -957,20 +1005,16 @@ def submit_answer(
 
     session.overall_points = float(session.overall_points or 0.0) + points_awarded
 
-    # AI difficulty recalibration — same logic as the legacy WS path.
-    stats = (
-        db.query(
-            func.count(UserAnswer.id).label("total"),
-            func.sum(func.cast(UserAnswer.is_correct == False, Integer)).label("failures"),
-            func.avg(UserAnswer.time_spent).label("avg_time"),
-        )
-        .filter(UserAnswer.question_id == question.id)
-        .first()
-    )
-    if stats and stats.total and stats.total > 0:
-        f_rate = (stats.failures or 0) / stats.total
-        t_factor = float(stats.avg_time or 0)
-        question.difficulty_level = calculate_difficulty_score(f_rate, t_factor)
+    # AI difficulty recalibration is deferred to a background task
+    # (Ticket 2). Running it on the submit path made every answer
+    # progressively slower as the platform's answer history grew:
+    # the old code scanned every answer ever submitted for this
+    # question across every candidate and every session, on every
+    # single submit. The recompute now runs after the response is
+    # sent so the candidate never waits for platform-wide statistics.
+    # See `_recompute_question_difficulty_async` for the rationale
+    # and the lagged-update guarantee.
+    background_tasks.add_task(_recompute_question_difficulty_async, question.id)
 
     # Bump the user's running skill estimate so the next question
     # selection adapts.
