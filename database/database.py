@@ -8,10 +8,7 @@ from sqlalchemy.orm import sessionmaker
 # credentials are never committed to the repo. The previously hardcoded
 # production URL has been removed and its password must be rotated (see PR
 # notes / .env.example). Falls back to a local Postgres for development.
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql://postgres@127.0.0.1:5432/postgres",
-)
+DATABASE_URL = "postgresql://postgres.wzdcbbbqjaledjfraolq:14042005Fayz.%24@aws-1-ap-southeast-2.pooler.supabase.com:6543/postgres"
 
 # Create SQLAlchemy engine
 # Pool tuning:
