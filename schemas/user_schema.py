@@ -236,6 +236,10 @@ class SessionStartRequest(BaseModel):
     All fields optional so legacy clients (sending no body) still work."""
 
     device_fingerprint: Optional[str] = Field(default=None, max_length=128)
+    # T1: optional pointer to the specific application this test attempt
+    # belongs to. New clients always send this; legacy clients (and admin
+    # standalone invitations not tied to a vacancy) leave it null.
+    candidate_id: Optional[uuid.UUID] = None
 
 
 class SessionEventCreate(BaseModel):

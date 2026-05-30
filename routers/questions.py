@@ -10,6 +10,8 @@ from sqlalchemy.orm import Session, joinedload
 
 from database.database import SessionLocal, get_db
 from database.models import (
+    Candidate,
+    Created_Vacancy,
     Practice,
     PracticeAssignment,
     Question,
@@ -142,6 +144,81 @@ def _practice_or_404(db: Session, practice_id: uuid.UUID) -> Practice:
     return practice
 
 
+def _resolve_assignment(
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    practice_id: uuid.UUID,
+    candidate_id: Optional[uuid.UUID] = None,
+) -> Optional[PracticeAssignment]:
+    """T1: pick the right PracticeAssignment for a (user, practice) lookup.
+
+    When the caller passes `candidate_id` (new clients always do for tests
+    tied to a job application), we scope strictly to that application.
+    When not provided we fall back to the legacy lookup so admin-pushed
+    invitations not tied to a vacancy continue to work — but we prefer
+    legacy/unscoped rows (candidate_id IS NULL) so we never accidentally
+    pick another application's assignment.
+    """
+    base = db.query(PracticeAssignment).filter(
+        PracticeAssignment.user_id == user_id,
+        PracticeAssignment.practice_id == practice_id,
+    )
+    if candidate_id is not None:
+        scoped = base.filter(PracticeAssignment.candidate_id == candidate_id).first()
+        if scoped is not None:
+            return scoped
+        # Fall through to a vacancy-scoped lookup so a candidate who just
+        # got moved to Testing can still take the test if the auto-create
+        # missed (e.g. legacy admin flow that only set status).
+        candidate = (
+            db.query(Candidate)
+            .filter(Candidate.id == candidate_id, Candidate.user_id == user_id)
+            .first()
+        )
+        if candidate is None:
+            return None
+        return (
+            base.filter(
+                PracticeAssignment.candidate_id.is_(None),
+            )
+            .first()
+        )
+    # Legacy: prefer assignments not tied to any application so we don't
+    # mistake another application's row for the one this caller wants.
+    legacy = (
+        base.filter(PracticeAssignment.candidate_id.is_(None)).first()
+    )
+    return legacy or base.first()
+
+
+def _resolve_session(
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    practice_id: uuid.UUID,
+    candidate_id: Optional[uuid.UUID] = None,
+    assignment_id: Optional[uuid.UUID] = None,
+) -> Optional[TestSession]:
+    """T1: find the TestSession that matches a specific application, not just
+    the user/practice pair. Same fallback story as `_resolve_assignment`."""
+    base = db.query(TestSession).filter(
+        TestSession.user_id == user_id,
+        TestSession.practice_id == practice_id,
+    )
+    if assignment_id is not None:
+        scoped = base.filter(TestSession.assignment_id == assignment_id).first()
+        if scoped is not None:
+            return scoped
+    if candidate_id is not None:
+        scoped = base.filter(TestSession.candidate_id == candidate_id).first()
+        if scoped is not None:
+            return scoped
+        # Fall back to the unscoped, pre-migration row only.
+        return base.filter(TestSession.candidate_id.is_(None)).first()
+    return base.filter(TestSession.candidate_id.is_(None)).first() or base.first()
+
+
 def _session_owned_or_404(
     db: Session, session_id: uuid.UUID, user_id: uuid.UUID
 ) -> TestSession:
@@ -208,14 +285,30 @@ def _finish_session(
         if meta is not None and not meta.auto_finished_reason:
             meta.auto_finished_reason = reason[:64]
 
-    assignment = (
-        db.query(PracticeAssignment)
-        .filter(
+    # T1: prefer the assignment_id stamped on the session — it's the only
+    # column that uniquely identifies "this attempt's assignment" when the
+    # user has two applications sharing the same practice. Otherwise scope
+    # by candidate_id; only fall back to the legacy (user_id, practice_id)
+    # lookup for sessions created before the migration ran.
+    assignment_query = db.query(PracticeAssignment)
+    if session.assignment_id:
+        assignment_query = assignment_query.filter(
+            PracticeAssignment.assignment_id == session.assignment_id
+        )
+    elif session.candidate_id:
+        assignment_query = assignment_query.filter(
+            PracticeAssignment.candidate_id == session.candidate_id
+        )
+    else:
+        assignment_query = assignment_query.filter(
             PracticeAssignment.practice_id == session.practice_id,
             PracticeAssignment.user_id == session.user_id,
+            # Pre-migration safety: if the session has no scope but matching
+            # assignments do, leave those alone — they belong to a specific
+            # application that this session isn't tied to.
+            PracticeAssignment.candidate_id.is_(None),
         )
-        .first()
-    )
+    assignment = assignment_query.first()
     if assignment and not assignment.is_completed:
         assignment.is_completed = True
         assignment.completed_at = datetime.utcnow()
@@ -458,6 +551,7 @@ def get_practice_eligibility(
     practice_id: uuid.UUID,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
+    candidate_id: Optional[uuid.UUID] = None,
 ):
     """Returns whether the current user can start the practice, or
     whether their single attempt has already been used.
@@ -505,13 +599,11 @@ def get_practice_eligibility(
             "reason": "Practice not found.",
         }
 
-    assignment = (
-        db.query(PracticeAssignment)
-        .filter(
-            PracticeAssignment.practice_id == practice_id,
-            PracticeAssignment.user_id == current_user.id,
-        )
-        .first()
+    assignment = _resolve_assignment(
+        db,
+        user_id=current_user.id,
+        practice_id=practice_id,
+        candidate_id=candidate_id,
     )
     if not assignment:
         return {
@@ -522,13 +614,12 @@ def get_practice_eligibility(
             "reason": "You are not invited to this test.",
         }
 
-    existing = (
-        db.query(TestSession)
-        .filter(
-            TestSession.user_id == current_user.id,
-            TestSession.practice_id == practice_id,
-        )
-        .first()
+    existing = _resolve_session(
+        db,
+        user_id=current_user.id,
+        practice_id=practice_id,
+        candidate_id=candidate_id,
+        assignment_id=assignment.assignment_id,
     )
     if existing:
         if existing.is_finished:
@@ -596,29 +687,30 @@ def get_test_result(
     practice_id: uuid.UUID,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
+    candidate_id: Optional[uuid.UUID] = None,
 ):
-    """Returns the user's latest test session score for a practice."""
+    """Returns the user's latest test session score for a practice.
+
+    T1: pass `?candidate_id=...` to scope the lookup to a specific
+    application when two applications share the same practice.
+    """
     user_id = current_user.id
 
-    assignment = (
-        db.query(PracticeAssignment)
-        .filter(
-            PracticeAssignment.practice_id == practice_id,
-            PracticeAssignment.user_id == user_id,
-        )
-        .first()
+    assignment = _resolve_assignment(
+        db,
+        user_id=user_id,
+        practice_id=practice_id,
+        candidate_id=candidate_id,
     )
     if not assignment:
         raise HTTPException(status_code=403, detail="You are not invited to this test.")
 
-    session = (
-        db.query(TestSession)
-        .filter(
-            TestSession.user_id == user_id,
-            TestSession.practice_id == practice_id,
-        )
-        .order_by(TestSession.started_time.desc())
-        .first()
+    session = _resolve_session(
+        db,
+        user_id=user_id,
+        practice_id=practice_id,
+        candidate_id=candidate_id,
+        assignment_id=assignment.assignment_id,
     )
 
     if not session:
@@ -727,26 +819,51 @@ def start_session(
     """
     practice = _practice_or_404(db, practice_id)
 
-    assignment = (
-        db.query(PracticeAssignment)
-        .filter(
-            PracticeAssignment.practice_id == practice_id,
-            PracticeAssignment.user_id == current_user.id,
+    # T1: tests are now scoped to a specific application. Clients send
+    # `candidate_id` in the body when starting; legacy / admin-pushed
+    # invitations without a vacancy leave it null.
+    candidate_id = body.candidate_id if body else None
+    candidate: Optional[Candidate] = None
+    if candidate_id is not None:
+        candidate = (
+            db.query(Candidate)
+            .filter(
+                Candidate.id == candidate_id,
+                Candidate.user_id == current_user.id,
+            )
+            .first()
         )
-        .first()
+        if candidate is None:
+            raise HTTPException(
+                status_code=403,
+                detail="That application doesn't belong to you.",
+            )
+
+    assignment = _resolve_assignment(
+        db,
+        user_id=current_user.id,
+        practice_id=practice_id,
+        candidate_id=candidate_id,
     )
     if not assignment:
         raise HTTPException(status_code=403, detail="You are not invited to this test.")
     if assignment.is_completed:
         raise HTTPException(status_code=409, detail="This assignment is already completed.")
 
-    existing = (
-        db.query(TestSession)
-        .filter(
-            TestSession.user_id == current_user.id,
-            TestSession.practice_id == practice_id,
-        )
-        .first()
+    # If the call was scoped to a candidate but the resolved assignment
+    # predates the migration (candidate_id is NULL), upgrade it in place so
+    # the next call doesn't accidentally pick it up for a *different*
+    # application that shares the same practice.
+    if candidate is not None and assignment.candidate_id is None:
+        assignment.candidate_id = candidate.id
+        assignment.vacancy_id = candidate.vacancy_id
+
+    existing = _resolve_session(
+        db,
+        user_id=current_user.id,
+        practice_id=practice_id,
+        candidate_id=candidate_id,
+        assignment_id=assignment.assignment_id,
     )
     if existing:
         # No-resume policy: any prior session — finished or abandoned —
@@ -775,10 +892,21 @@ def start_session(
             detail="Tests must be taken from a desktop or laptop browser.",
         )
 
+    # T1: stamp the new session with the application linkage so finishing
+    # this attempt only affects this application's PracticeAssignment.
+    session_candidate_id = (
+        candidate.id if candidate is not None else assignment.candidate_id
+    )
+    session_vacancy_id = (
+        candidate.vacancy_id if candidate is not None else assignment.vacancy_id
+    )
     session = TestSession(
         session_id=uuid.uuid4(),
         practice_id=practice_id,
         user_id=current_user.id,
+        candidate_id=session_candidate_id,
+        vacancy_id=session_vacancy_id,
+        assignment_id=assignment.assignment_id,
         overall_points=0.0,
         is_finished=False,
         started_time=now,
@@ -828,21 +956,23 @@ def get_my_session_for_practice(
     practice_id: uuid.UUID,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
+    candidate_id: Optional[uuid.UUID] = None,
 ):
     """Returns the current user's TestSession (active or finished) for a
     practice if one exists, or `null` otherwise.
 
     Designed so the frontend can decide between "Start", "Resume", and
     "View result" without first attempting `POST /sessions`.
+
+    T1: when the caller passes `candidate_id`, the lookup is scoped to that
+    specific application so two applications sharing the same practice no
+    longer collide on the same session.
     """
-    session = (
-        db.query(TestSession)
-        .options(joinedload(TestSession.practice))
-        .filter(
-            TestSession.user_id == current_user.id,
-            TestSession.practice_id == practice_id,
-        )
-        .first()
+    session = _resolve_session(
+        db,
+        user_id=current_user.id,
+        practice_id=practice_id,
+        candidate_id=candidate_id,
     )
     if not session:
         return None

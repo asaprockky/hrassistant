@@ -2014,6 +2014,31 @@ def update_candidate_status(
             vacancy_name=vacancy_name,
         )
 
+        # T1: when the admin moves an application to "Testing", auto-create
+        # the per-application PracticeAssignment so the candidate immediately
+        # sees the test for *this* application (not bleeding across other
+        # applications that happen to share the same practice). We only
+        # create one if the vacancy has a practice linked AND no assignment
+        # exists yet for this exact application.
+        if update_data.status == "Testing" and candidate.vacancy and candidate.vacancy.practice_id:
+            existing_assignment = (
+                db.query(PracticeAssignment)
+                .filter(PracticeAssignment.candidate_id == candidate.id)
+                .first()
+            )
+            if not existing_assignment:
+                db.add(
+                    PracticeAssignment(
+                        assignment_id=uuid.uuid4(),
+                        practice_id=candidate.vacancy.practice_id,
+                        user_id=candidate.user_id,
+                        candidate_id=candidate.id,
+                        vacancy_id=candidate.vacancy_id,
+                        assigned_at=datetime.utcnow(),
+                        is_completed=False,
+                    )
+                )
+
     db.commit()
     db.refresh(candidate)
     db.refresh(candidate, ["user", "vacancy"])
