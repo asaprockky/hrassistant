@@ -32,10 +32,14 @@ from utils.ai_logic import calculate_difficulty_score
 # ANTI-CHEAT CONFIG
 # ==========================================
 
-# A `warn` or `critical` event consumes a strike. The first strike returns
-# a warning to the client; the second auto-finishes the session with
+# A `warn` or `critical` event consumes a strike. The first two strikes
+# return an escalating warning to the client ("Warning 1 of 3" /
+# "Warning 2 of 3"); the third auto-finishes the session with
 # reason="cheating_detected". Set to 1 if you want zero-tolerance.
-STRIKE_LIMIT = 2
+# This is the single source of truth for the threshold — the frontend
+# never hard-codes a number, it always reads `strike_limit` from the
+# /events response.
+STRIKE_LIMIT = 3
 
 # Answers submitted faster than this are auto-flagged as suspicious_timing.
 SUSPICIOUS_TIMING_SECONDS = 0.5
@@ -43,8 +47,8 @@ SUSPICIOUS_TIMING_SECONDS = 0.5
 # These events are hard policy failures. They immediately close the
 # session with `reason=cheating_detected` and a zero score.
 #
-# Everything else goes through the normal strike counter (one warning,
-# then close on the second violation — see STRIKE_LIMIT) so a noisy OS
+# Everything else goes through the normal strike counter (two warnings,
+# then close on the third violation — see STRIKE_LIMIT) so a noisy OS
 # notification or stray ESC press doesn't zero a student out without
 # warning. Mobile / multi-display are the only events we never warn on
 # because they describe a setup that is fundamentally incompatible with
@@ -1246,12 +1250,16 @@ def report_session_event(
     paste_attempt, devtools_open, fullscreen_exit, copy_attempt,
     right_click, screenshot_attempt, ...).
 
-    Strike policy (configurable via `STRIKE_LIMIT`):
+    Strike policy (configurable via `STRIKE_LIMIT`, default 3):
       - `severity=info`     — logged, no strike
       - `severity=warn` / `critical`
-          * 1st strike → response includes `warning=true, strikes=1`
-          * 2nd strike → response includes `finished=true, reason="cheating_detected"`,
-            and the session is auto-finalized with `assignment.is_completed=True`.
+          * 1st & 2nd strikes → response includes
+            `warning=true, strikes=N, strike_limit=STRIKE_LIMIT` and a
+            human `message` like "Warning N of 3 — ..." so the client
+            can show an escalating banner.
+          * On the `STRIKE_LIMIT`-th strike → response includes
+            `finished=true, reason="cheating_detected"`, and the
+            session is auto-finalized with `assignment.is_completed=True`.
 
     Returns 409 if the session is already finished — clients should stop
     sending events at that point.
@@ -1330,9 +1338,13 @@ def report_session_event(
             ),
         )
     elif counts_as_strike:
+        remaining = max(0, STRIKE_LIMIT - int(meta.strikes or 0))
+        if remaining <= 1:
+            tail = "one more violation will auto-submit your test."
+        else:
+            tail = f"{remaining} more violations before your test is auto-submitted."
         response["message"] = (
-            f"Warning: this counts as strike {meta.strikes} of {STRIKE_LIMIT}. "
-            "One more violation will auto-submit your test."
+            f"Warning {meta.strikes} of {STRIKE_LIMIT} \u2014 {tail}"
         )
     return response
 
