@@ -244,6 +244,29 @@ class PracticeAssignment(Base):
     assignment_id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     practice_id = Column(UUID(as_uuid=True), ForeignKey("practice.practice_id"), nullable=False)
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+
+    # T1: pin every assignment to the specific application it was created
+    # for. Before this column, an admin moving Candidate A and Candidate B
+    # (same user, two vacancies that happen to share a practice) to Testing
+    # would collide on a single `(user_id, practice_id)` row, so finishing
+    # the test for one application also flipped the other to completed.
+    # Nullable for back-compat with legacy rows; new rows always set it.
+    candidate_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("candidates.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    # Denormalised pointer back to the vacancy, kept alongside candidate_id
+    # so list views can filter / label by vacancy without an extra join
+    # through candidates.
+    vacancy_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("created_vacancies.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     assigned_at = Column(DateTime, default=datetime.utcnow)
     is_completed = Column(Boolean, default=False)
     completed_at = Column(DateTime, nullable=True)
@@ -253,6 +276,8 @@ class PracticeAssignment(Base):
     # uses this table as `secondary`).
     user = relationship("User", overlaps="allowed_users,assigned_practices")
     practice = relationship("Practice", overlaps="allowed_users,assigned_practices")
+    candidate = relationship("Candidate", foreign_keys=[candidate_id])
+    vacancy = relationship("Created_Vacancy", foreign_keys=[vacancy_id])
 
 
 class TestSession(Base):
@@ -264,13 +289,39 @@ class TestSession(Base):
     
     user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     user = relationship("User", back_populates="test_sessions") # Added relationship to User
-    
+
+    # T1: scope a session to the specific application it belongs to. Without
+    # these columns two applications sharing the same practice point at the
+    # same `(user_id, practice_id)` and the system can't tell their attempts
+    # apart. Nullable for legacy rows; new sessions always carry them.
+    candidate_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("candidates.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    vacancy_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("created_vacancies.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    assignment_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("practice_assignments.assignment_id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     overall_points = Column(Float, default=0.0)
     is_finished = Column(Boolean, default=False)
     started_time = Column(DateTime, default=datetime.utcnow)
     
     # Relationship to track individual answers
     answers = relationship("UserAnswer", back_populates="session")
+    candidate = relationship("Candidate", foreign_keys=[candidate_id])
+    vacancy = relationship("Created_Vacancy", foreign_keys=[vacancy_id])
+    assignment = relationship("PracticeAssignment", foreign_keys=[assignment_id])
 
 class UserAnswer(Base):
     __tablename__ = "user_answers"

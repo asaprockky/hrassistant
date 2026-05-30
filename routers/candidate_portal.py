@@ -859,10 +859,19 @@ def get_dashboard(
     notifications.sort(key=lambda i: i.get("created_at") or _utcnow(), reverse=True)
     unread_notifications = len([item for item in notifications if not item.get("is_read")])
 
+    # T2: per-application summary so the dashboard can render a true
+    # "at-a-glance" panel (counts + links) instead of the legacy
+    # "first test card on the dashboard" surface that hid additional
+    # tests behind a second screen.
+    applications_summary = _applications_summary(db, current_user.id)
+
     return {
         "greeting": {
             "headline": f"Good morning, {current_user.name}",
-            "message": f"You have {len(active)} active assessments pending and {1 if latest_review else 0} resume review available.",
+            "message": (
+                f"You have {applications_summary['tests_to_take']} test(s) to take "
+                f"and {applications_summary['in_progress']} application(s) in progress."
+            ),
         },
         "stats": {
             "active_assessments": len(active),
@@ -871,6 +880,7 @@ def get_dashboard(
             "certificates": len(certs),
             "notifications": unread_notifications,
         },
+        "applications_summary": applications_summary,
         "active_assessments": active[:2],
         "recent_activity": [
             {
@@ -886,6 +896,79 @@ def get_dashboard(
         "certificates_preview": certs[:6],
         "notifications_preview": notifications[:5],
         "profile_share_url": "/candidate/portal/profile/share",
+    }
+
+
+def _applications_summary(db: Session, user_id: uuid.UUID) -> dict:
+    """T2: rolled-up counts about *applications* (not standalone practices)
+    so the dashboard can link into My Applications instead of duplicating
+    a "first test" surface."""
+    candidates = (
+        db.query(Candidate)
+        .options(joinedload(Candidate.vacancy))
+        .filter(Candidate.user_id == user_id)
+        .all()
+    )
+    total = len(candidates)
+    in_progress = sum(
+        1 for c in candidates if c.status not in {"Hired", "Rejected"}
+    )
+    hired = sum(1 for c in candidates if c.status == "Hired")
+    rejected = sum(1 for c in candidates if c.status == "Rejected")
+
+    candidate_ids = [c.id for c in candidates]
+    sessions_by_candidate: dict[uuid.UUID, TestSession] = {}
+    assignments_by_candidate: dict[uuid.UUID, PracticeAssignment] = {}
+    if candidate_ids:
+        for s in (
+            db.query(TestSession)
+            .filter(
+                TestSession.user_id == user_id,
+                TestSession.candidate_id.in_(candidate_ids),
+            )
+            .order_by(TestSession.started_time.desc())
+            .all()
+        ):
+            if s.candidate_id is not None:
+                sessions_by_candidate.setdefault(s.candidate_id, s)
+        for a in (
+            db.query(PracticeAssignment)
+            .filter(
+                PracticeAssignment.user_id == user_id,
+                PracticeAssignment.candidate_id.in_(candidate_ids),
+            )
+            .all()
+        ):
+            if a.candidate_id is not None:
+                assignments_by_candidate.setdefault(a.candidate_id, a)
+
+    tests_to_take = 0
+    tests_in_review = 0
+    tests_completed = 0
+    for c in candidates:
+        if c.vacancy is None or c.vacancy.practice_id is None:
+            continue
+        session = sessions_by_candidate.get(c.id)
+        assignment = assignments_by_candidate.get(c.id)
+        if session and session.is_finished:
+            tests_completed += 1
+        elif session and not session.is_finished:
+            tests_to_take += 1
+        elif assignment and not assignment.is_completed and c.status == "Testing":
+            tests_to_take += 1
+        elif assignment and assignment.is_completed:
+            tests_in_review += 1
+        elif c.status in {"Interviewing", "Hired"} and assignment is not None:
+            tests_in_review += 1
+
+    return {
+        "total": total,
+        "in_progress": in_progress,
+        "hired": hired,
+        "rejected": rejected,
+        "tests_to_take": tests_to_take,
+        "tests_in_review": tests_in_review,
+        "tests_completed": tests_completed,
     }
 
 
@@ -1518,13 +1601,165 @@ def _vacancy_practice_summary(db: Session, practice: Optional[Practice]) -> Opti
     }
 
 
+def _application_test_block(
+    *,
+    candidate: Optional[Candidate],
+    vacancy: Created_Vacancy,
+    assignment: Optional[PracticeAssignment],
+    session: Optional[TestSession],
+    now: datetime,
+) -> dict:
+    """T1/T3: one canonical "test for this application" block consumed by
+    the candidate UI. Statuses + CTA wording must stay consistent with
+    `APPLICATION_PIPELINE` so dashboard / applications / test entry all
+    tell the same story.
+
+    Status values (frontend keys off these):
+      - `unavailable`    — no practice linked to this vacancy
+      - `not_assigned`   — application exists but admin hasn't moved it to
+                           Testing yet (no PracticeAssignment)
+      - `ready_to_take`  — assigned, no session started yet
+      - `in_progress`    — session started, not finished
+      - `expired`        — practice deadline passed before completion
+      - `submitted`      — session finished, application still in Testing
+                           (HR hasn't reviewed yet) OR application moved
+                           on to Interviewing without us seeing the score
+      - `completed`      — session finished and the candidate can view
+                           the report (any pipeline stage)
+    """
+    practice = vacancy.practice if vacancy is not None else None
+    if practice is None:
+        return {
+            "status": "unavailable",
+            "label": "No test for this role",
+            "cta_label": None,
+            "cta_url": None,
+            "session_id": None,
+            "assignment_id": None,
+            "score": None,
+            "deadline": None,
+        }
+
+    deadline = practice.deadline
+    deadline_passed = bool(deadline and deadline < now)
+
+    if session is not None and session.is_finished:
+        score = _percent(session.overall_points)
+        return {
+            "status": "completed",
+            "label": "Test completed",
+            "cta_label": "View report",
+            "cta_url": f"/reports/{session.session_id}",
+            "session_id": str(session.session_id),
+            "assignment_id": str(assignment.assignment_id) if assignment else None,
+            "score": score,
+            "deadline": deadline,
+        }
+
+    if session is not None and not session.is_finished:
+        if deadline_passed:
+            return {
+                "status": "expired",
+                "label": "Test deadline passed",
+                "cta_label": None,
+                "cta_url": None,
+                "session_id": str(session.session_id),
+                "assignment_id": str(assignment.assignment_id) if assignment else None,
+                "score": None,
+                "deadline": deadline,
+            }
+        return {
+            "status": "in_progress",
+            "label": "Test in progress",
+            "cta_label": "Resume test",
+            "cta_url": _test_entry_url(vacancy, candidate),
+            "session_id": str(session.session_id),
+            "assignment_id": str(assignment.assignment_id) if assignment else None,
+            "score": None,
+            "deadline": deadline,
+        }
+
+    # No session yet.
+    if assignment is None:
+        # No assignment yet — admin hasn't confirmed this application
+        # (or hasn't moved it to Testing). Surface the practice details
+        # but no CTA.
+        return {
+            "status": "not_assigned",
+            "label": "Awaiting review by hiring team",
+            "cta_label": None,
+            "cta_url": None,
+            "session_id": None,
+            "assignment_id": None,
+            "score": None,
+            "deadline": deadline,
+        }
+
+    if assignment.is_completed:
+        # Admin marked completed without an actual session — treat as
+        # submitted so the candidate sees the awaiting state.
+        return {
+            "status": "submitted",
+            "label": "Test submitted — awaiting review",
+            "cta_label": None,
+            "cta_url": None,
+            "session_id": None,
+            "assignment_id": str(assignment.assignment_id),
+            "score": None,
+            "deadline": deadline,
+        }
+
+    if deadline_passed:
+        return {
+            "status": "expired",
+            "label": "Test deadline passed",
+            "cta_label": None,
+            "cta_url": None,
+            "session_id": None,
+            "assignment_id": str(assignment.assignment_id),
+            "score": None,
+            "deadline": deadline,
+        }
+
+    return {
+        "status": "ready_to_take",
+        "label": "Test ready",
+        "cta_label": "Take test",
+        "cta_url": _test_entry_url(vacancy, candidate),
+        "session_id": None,
+        "assignment_id": str(assignment.assignment_id),
+        "score": None,
+        "deadline": deadline,
+    }
+
+
+def _test_entry_url(
+    vacancy: Created_Vacancy,
+    candidate: Optional[Candidate],
+) -> Optional[str]:
+    """Frontend URL that opens the test for the *specific* application.
+
+    The frontend's test page accepts `?candidate=<candidate_id>` and
+    forwards it on the `POST /testing/practices/.../sessions` body so
+    the resulting TestSession is application-scoped.
+    """
+    if vacancy is None or vacancy.practice_id is None:
+        return None
+    base = f"/test/{vacancy.practice_id}"
+    if candidate is not None:
+        return f"{base}?candidate={candidate.id}"
+    return base
+
+
 def _vacancy_full_payload(
     db: Session,
     vacancy: Created_Vacancy,
     *,
     candidate: Optional[Candidate],
+    assignment: Optional[PracticeAssignment],
     session: Optional[TestSession],
     today: date,
+    now: Optional[datetime] = None,
 ) -> dict:
     """Shape consumed by both /vacancies/{id} and /applications items."""
     application_block = None
@@ -1537,6 +1772,14 @@ def _vacancy_full_payload(
             "stage_total": len(APPLICATION_PIPELINE),
             "is_terminal": candidate.status in APPLICATION_TERMINAL,
         }
+
+    test_block = _application_test_block(
+        candidate=candidate,
+        vacancy=vacancy,
+        assignment=assignment,
+        session=session,
+        now=now or _utcnow(),
+    )
 
     return {
         "id": str(vacancy.id),
@@ -1551,7 +1794,10 @@ def _vacancy_full_payload(
         "company_name": vacancy.company.name if vacancy.company else None,
         "practice": _vacancy_practice_summary(db, vacancy.practice),
         "application": application_block,
+        # `session_id` is retained for back-compat with older clients that
+        # haven't switched to reading from `test.session_id` yet.
         "session_id": str(session.session_id) if session else None,
+        "test": test_block,
     }
 
 
@@ -1589,21 +1835,42 @@ def get_vacancy_detail(
         .first()
     )
 
-    session = None
+    # T1: scope assignment + session to this specific application so two
+    # vacancies sharing the same practice no longer collide.
+    assignment: Optional[PracticeAssignment] = None
+    session: Optional[TestSession] = None
     if vacancy.practice_id is not None:
-        session = (
-            db.query(TestSession)
+        assignment = (
+            db.query(PracticeAssignment)
             .filter(
-                TestSession.user_id == current_user.id,
-                TestSession.practice_id == vacancy.practice_id,
+                PracticeAssignment.user_id == current_user.id,
+                PracticeAssignment.practice_id == vacancy.practice_id,
+                PracticeAssignment.candidate_id == (candidate.id if candidate else None),
             )
-            .order_by(TestSession.started_time.desc())
             .first()
+            if candidate is not None
+            else None
         )
+        session_q = db.query(TestSession).filter(
+            TestSession.user_id == current_user.id,
+            TestSession.practice_id == vacancy.practice_id,
+        )
+        if candidate is not None:
+            session_q = session_q.filter(
+                TestSession.candidate_id == candidate.id
+            )
+        else:
+            session_q = session_q.filter(TestSession.candidate_id.is_(None))
+        session = session_q.order_by(TestSession.started_time.desc()).first()
 
-    today = _utcnow().date()
+    now = _utcnow()
     return _vacancy_full_payload(
-        db, vacancy, candidate=candidate, session=session, today=today
+        db, vacancy,
+        candidate=candidate,
+        assignment=assignment,
+        session=session,
+        today=now.date(),
+        now=now,
     )
 
 
@@ -1628,31 +1895,108 @@ def list_my_applications(
         .all()
     )
 
-    # One-shot lookup of every relevant session keyed by practice id.
-    practice_ids = {c.vacancy.practice_id for c in candidates if c.vacancy and c.vacancy.practice_id}
-    sessions_by_practice: dict[uuid.UUID, TestSession] = {}
-    if practice_ids:
+    candidate_ids = [c.id for c in candidates]
+
+    # T1: look up assignments + sessions scoped to each *application*, not
+    # just the (user, practice) pair. Two applications that happen to share
+    # the same practice get two distinct rows; finishing one no longer
+    # affects the other.
+    assignments_by_candidate: dict[uuid.UUID, PracticeAssignment] = {}
+    sessions_by_candidate: dict[uuid.UUID, TestSession] = {}
+    if candidate_ids:
+        assignments = (
+            db.query(PracticeAssignment)
+            .filter(
+                PracticeAssignment.user_id == current_user.id,
+                PracticeAssignment.candidate_id.in_(candidate_ids),
+            )
+            .all()
+        )
+        for a in assignments:
+            if a.candidate_id is not None:
+                assignments_by_candidate.setdefault(a.candidate_id, a)
+
         sessions = (
             db.query(TestSession)
             .filter(
                 TestSession.user_id == current_user.id,
-                TestSession.practice_id.in_(practice_ids),
+                TestSession.candidate_id.in_(candidate_ids),
             )
             .order_by(TestSession.started_time.desc())
             .all()
         )
         for s in sessions:
-            sessions_by_practice.setdefault(s.practice_id, s)
+            if s.candidate_id is not None:
+                sessions_by_candidate.setdefault(s.candidate_id, s)
 
-    today = _utcnow().date()
+    # Legacy fallback: any candidate that still has no scoped session/
+    # assignment but whose vacancy has a practice — try to find a row that
+    # belongs to that user+practice and is not yet tied to another
+    # application. This keeps pre-migration data visible until the owner
+    # runs the backfill SQL.
+    unscoped_lookup_practices = {
+        candidate.vacancy.practice_id
+        for candidate in candidates
+        if candidate.vacancy
+        and candidate.vacancy.practice_id
+        and candidate.id not in sessions_by_candidate
+    }
+    legacy_sessions_by_practice: dict[uuid.UUID, TestSession] = {}
+    legacy_assignments_by_practice: dict[uuid.UUID, PracticeAssignment] = {}
+    if unscoped_lookup_practices:
+        legacy_sessions = (
+            db.query(TestSession)
+            .filter(
+                TestSession.user_id == current_user.id,
+                TestSession.practice_id.in_(unscoped_lookup_practices),
+                TestSession.candidate_id.is_(None),
+            )
+            .order_by(TestSession.started_time.desc())
+            .all()
+        )
+        for s in legacy_sessions:
+            legacy_sessions_by_practice.setdefault(s.practice_id, s)
+
+        legacy_assignments = (
+            db.query(PracticeAssignment)
+            .filter(
+                PracticeAssignment.user_id == current_user.id,
+                PracticeAssignment.practice_id.in_(unscoped_lookup_practices),
+                PracticeAssignment.candidate_id.is_(None),
+            )
+            .all()
+        )
+        for a in legacy_assignments:
+            legacy_assignments_by_practice.setdefault(a.practice_id, a)
+
+    now = _utcnow()
+    today = now.date()
     items: list[dict] = []
     counts = {"total": 0, "in_progress": 0, "completed": 0, "rejected": 0}
+    seen_legacy_practices: set[uuid.UUID] = set()
     for candidate in candidates:
         if candidate.vacancy is None:
             continue
-        session = sessions_by_practice.get(candidate.vacancy.practice_id) if candidate.vacancy.practice_id else None
+        practice_id = candidate.vacancy.practice_id
+        assignment = assignments_by_candidate.get(candidate.id)
+        session = sessions_by_candidate.get(candidate.id)
+        # Only consume a legacy unscoped row once across all applications
+        # — otherwise two applications would both claim it.
+        if assignment is None and practice_id and practice_id not in seen_legacy_practices:
+            assignment = legacy_assignments_by_practice.get(practice_id)
+            if assignment is not None:
+                seen_legacy_practices.add(practice_id)
+        if session is None and practice_id and practice_id in legacy_sessions_by_practice and practice_id not in seen_legacy_practices:
+            session = legacy_sessions_by_practice.get(practice_id)
+            seen_legacy_practices.add(practice_id)
+
         payload = _vacancy_full_payload(
-            db, candidate.vacancy, candidate=candidate, session=session, today=today
+            db, candidate.vacancy,
+            candidate=candidate,
+            assignment=assignment,
+            session=session,
+            today=today,
+            now=now,
         )
         items.append(payload)
         counts["total"] += 1
@@ -1663,10 +2007,29 @@ def list_my_applications(
         else:
             counts["in_progress"] += 1
 
+    summary = {
+        "tests_to_take": sum(
+            1
+            for item in items
+            if item["test"]["status"] in {"ready_to_take", "in_progress"}
+        ),
+        "tests_in_review": sum(
+            1
+            for item in items
+            if item["test"]["status"] == "submitted"
+        ),
+        "tests_completed": sum(
+            1
+            for item in items
+            if item["test"]["status"] == "completed"
+        ),
+    }
+
     return {
         "items": items,
         "counts": counts,
         "pipeline": APPLICATION_PIPELINE,
+        "summary": summary,
     }
 
 
