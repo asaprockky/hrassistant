@@ -1016,6 +1016,42 @@ def submit_answer(
         final_score = round(float(finished.overall_points or 0.0), 2)
         finish_reason = "all_answered"
 
+    # Latency win: we already touched everything we need (session,
+    # practice, fresh user_skill, fresh answered set) to pick the next
+    # question. Folding that selection into this response saves the
+    # client one full HTTP round-trip per question. Selection still
+    # uses the just-updated `new_skill`, so adaptivity is preserved.
+    next_question_payload: Optional[dict] = None
+    if not is_finished_flag and not _deadline_exceeded(session, practice):
+        next_q, remaining_ids, next_answered_count = _pick_adaptive_question(
+            db, session, practice, new_skill
+        )
+        if next_q is None:
+            # All questions answered (shouldn't normally happen since we
+            # finished above, but handle defensively for legacy sessions
+            # with stale meta).
+            finished = _finish_session(db, session)
+            is_finished_flag = True
+            final_score = round(float(finished.overall_points or 0.0), 2)
+            finish_reason = "all_answered"
+        else:
+            total_for_next = next_answered_count + len(remaining_ids)
+            next_question_payload = {
+                "event": "question_data",
+                "session_id": str(session.session_id),
+                "id": str(next_q.id),
+                "text": next_q.text,
+                "options": next_q.options,
+                "category": next_q.category,
+                "points": next_q.points,
+                "progress": {
+                    "answered_count": next_answered_count,
+                    "total_questions": total_for_next,
+                    "remaining_count": len(remaining_ids),
+                },
+                "skill_estimate": round(new_skill, 3),
+            }
+
     return {
         "event": "answer_result",
         "is_correct": is_correct,
@@ -1029,6 +1065,10 @@ def submit_answer(
         "finish_reason": finish_reason,
         "skill_estimate": round(new_skill, 3),
         "suspicious_timing": bool(suspicious),
+        # `null` when the test just finished; otherwise contains the
+        # same shape as GET /sessions/{id}/next-question so the client
+        # can render it directly without a second request.
+        "next_question": next_question_payload,
     }
 
 
